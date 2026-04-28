@@ -1,0 +1,22 @@
+# Environments
+venv/
+env/
+
+# Secrets & API Keys (CRITICAL)
+.env
+credentials.json
+token.json
+
+# Generated State & Output Files
+*.pkl
+current_financial_state.pkl
+*.pdf
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Private Data (Optional: if you don't want your raw excel files public)
+# *.xlsx
+# *.csv

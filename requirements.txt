@@ -1,0 +1,14 @@
+pandas
+openpyxl
+numpy
+reportlab
+matplotlib
+groq
+langchain
+langchain-core
+dotenv
+langgraph
+google-api-python-client
+google-auth-httplib2 
+google-auth-oauthlib
+langchain-groq
