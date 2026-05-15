@@ -1,6 +1,9 @@
 import pandas as pd
 import numpy as np
 
+# Silence the downcasting warning project-wide
+pd.set_option('future.no_silent_downcasting', True)
+
 def detect_zscore_anomalies(df: pd.DataFrame, column: str = 'Amount', threshold: float = 3.0) -> pd.DataFrame:
     """
     Detects anomalies using the Z-score method.
@@ -99,7 +102,7 @@ def detect_rule_based(df: pd.DataFrame, amount_col: str = 'Amount', entity_col: 
         if type_col in df.columns: join_cols.append(type_col)
             
         df = pd.merge(df, mom_df[join_cols + ['is_mom_anomaly']], on=join_cols, how='left')
-        df['is_mom_anomaly'] = df['is_mom_anomaly'].fillna(False)
+        df['is_mom_anomaly'] = df['is_mom_anomaly'].fillna(False).astype(bool)
     else:
         df['is_mom_anomaly'] = False
 
@@ -112,7 +115,53 @@ def detect_rule_based(df: pd.DataFrame, amount_col: str = 'Amount', entity_col: 
     
     return df
 
-def detect_all_anomalies(df: pd.DataFrame, amount_col: str = 'Amount') -> pd.DataFrame:
+def detect_budget_breaches(df: pd.DataFrame, budget_limits: dict = None) -> pd.DataFrame:
+    """
+    Checks if spending in specific categories exceeds provided budget limits.
+    budget_limits: dict mapping Category names to dollar amounts (e.g., {'Marketing': 5000})
+    """
+    df = df.copy()
+    df['Limit'] = 0.0
+    df['Actual'] = 0.0
+    df['Overspend'] = 0.0
+    df['Percent_Over'] = "0%"
+    df['Is_Budget_Breach'] = False
+
+    if not budget_limits or 'Type' not in df.columns:
+        return df
+
+    # Only look at expenses
+    expenses = df[df['Type'] == 'Expense']
+    if expenses.empty:
+        return df
+
+    # Group by category and calculate totals
+    cat_totals = expenses.groupby('Category')['Amount'].sum().to_dict()
+
+    for category, limit in budget_limits.items():
+        # Heuristic: category in limits might be 'Marketing' but in data could be 'marketing' or 'Marketing Dept'
+        # We'll do a case-insensitive match for simplicity here, or exact if preferred.
+        # Let's try to find the key in cat_totals that matches
+        actual_spend = 0
+        matching_cat = None
+        for c in cat_totals:
+            if str(c).lower() == str(category).lower():
+                actual_spend = cat_totals[c]
+                matching_cat = c
+                break
+        
+        if matching_cat and actual_spend > limit:
+            # Mark all rows of this category as budget breaches
+            mask = (df['Category'] == matching_cat) & (df['Type'] == 'Expense')
+            df.loc[mask, 'Is_Budget_Breach'] = True
+            df.loc[mask, 'Limit'] = float(limit)
+            df.loc[mask, 'Actual'] = float(actual_spend)
+            df.loc[mask, 'Overspend'] = float(actual_spend - limit)
+            df.loc[mask, 'Percent_Over'] = f"{((actual_spend - limit) / limit * 100):.1f}%"
+
+    return df
+
+def detect_all_anomalies(df: pd.DataFrame, amount_col: str = 'Amount', budget_limits: dict = None) -> pd.DataFrame:
     """
     Applies multiple anomaly detection methods, combines the results using logical OR,
     and calculates a severity score based on how many methods flagged the transaction.
@@ -120,17 +169,22 @@ def detect_all_anomalies(df: pd.DataFrame, amount_col: str = 'Amount') -> pd.Dat
     df = detect_zscore_anomalies(df, column=amount_col)
     df = detect_iqr_anomalies(df, column=amount_col)
     df = detect_rule_based(df, amount_col=amount_col)
+    df = detect_budget_breaches(df, budget_limits=budget_limits)
     
-    df['Is_Anomaly'] = df['Anomaly_ZScore'] | df['Anomaly_IQR'] | df['Anomaly_RuleBased']
+    # Is_Anomaly is True if ANY detection method flagged it
+    df['Is_Anomaly'] = df['Anomaly_ZScore'] | df['Anomaly_IQR'] | df['Anomaly_RuleBased'] | df['Is_Budget_Breach']
     
+    # Severity calculation
+    # Budget breaches are automatically 'High' severity if not already Critical
     flags_count = df['Anomaly_ZScore'].astype(int) + df['Anomaly_IQR'].astype(int) + df['Anomaly_RuleBased'].astype(int)
     
     conditions = [
-        (flags_count == 3),
+        (flags_count >= 3),
         (flags_count == 2),
+        (df['Is_Budget_Breach'] == True),
         (flags_count == 1)
     ]
-    choices = ['Critical', 'High', 'Medium']
+    choices = ['Critical', 'High', 'High', 'Medium']
     
     df['Severity'] = np.select(conditions, choices, default='Normal')
     

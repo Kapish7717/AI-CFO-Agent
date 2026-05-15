@@ -23,11 +23,22 @@ class DataIngestion:
             raise FileNotFoundError(f"CSV file not found at {file_path}")
         
         try:
+            # First, try reading normally
             df = pd.read_csv(file_path)
-            print(f"Successfully loaded {len(df)} rows from {file_path}")
+            
+            # HEURISTIC: If the first row has many NaNs or just one non-null value, 
+            # it might be a title row.
+            if df.columns.str.contains('Unnamed').any() and df.iloc[0].count() <= 1:
+                import sys
+                sys.stderr.write(f"Detected potential title row in {file_path}. Skipping first row...\n")
+                df = pd.read_csv(file_path, skiprows=1)
+                
+            import sys
+            sys.stderr.write(f"Successfully loaded {len(df)} rows from {file_path}\n")
             return df
         except Exception as e:
-            print(f"Error loading CSV: {e}")
+            import sys
+            sys.stderr.write(f"Error loading CSV: {e}\n")
             raise e
 
     def load_from_excel(self, file_path: str) -> pd.DataFrame:
@@ -45,43 +56,55 @@ class DataIngestion:
         
         try:
             df = pd.read_excel(file_path)
-            print(f"Successfully loaded {len(df)} rows from {file_path}")
+            import sys
+            sys.stderr.write(f"Successfully loaded {len(df)} rows from {file_path}\n")
             return df
         except Exception as e:
-            print(f"Error loading Excel file: {e}")
+            import sys
+            sys.stderr.write(f"Error loading Excel file: {e}\n")
             raise e
 
     def load_from_google_sheets(self, sheet_url: str) -> pd.DataFrame:
         """
-        Loads data from a public Google Sheet using its URL.
-        
-        Note: For private sheets, a library like `gspread` and service account 
-        credentials would be required. This method relies on the sheet being 
-        publicly viewable and uses pandas to read the export URL.
-        
-        Args:
-            sheet_url (str): The URL of the Google Sheet.
-            
-        Returns:
-            pd.DataFrame: A pandas DataFrame containing the loaded data.
+        Loads data from a Google Sheet using the gspread library and OAuth credentials.
         """
-        try:
-            # Convert the regular Google Sheets URL to an export CSV URL
-            if "edit#gid=" in sheet_url:
-                csv_url = sheet_url.replace("edit#gid=", "export?format=csv&gid=")
-            elif "edit?usp=sharing" in sheet_url:
-                 csv_url = sheet_url.replace("edit?usp=sharing", "export?format=csv")
-            elif "edit" in sheet_url:
-                csv_url = sheet_url.replace("edit", "export?format=csv")
-            else:
-                 csv_url = sheet_url # Assume it's already an export link or handled by pandas
-            
-            df = pd.read_csv(csv_url)
-            print(f"Successfully loaded {len(df)} rows from Google Sheets")
+        import gspread
+        import sys
+        import os
+        
+        # Fast path: If it's a direct CSV export link, bypass OAuth and gspread
+        if "export?format=csv" in sheet_url:
+            import sys
+            sys.stderr.write(f"Loading direct Google Sheets CSV export: {sheet_url}\n")
+            df = pd.read_csv(sheet_url)
+            sys.stderr.write(f"Successfully loaded {len(df)} rows directly via CSV export.\n")
             return df
+            
+        # Add parent directory to path to import google_auth
+        sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from google_auth import get_google_credentials
+        
+        try:
+            import sys
+            sys.stderr.write("Authenticating with Google Sheets API...\n")
+            creds = get_google_credentials()
+            gc = gspread.authorize(creds)
+            
+            sys.stderr.write("Fetching real-time data using gspread...\n")
+            sh = gc.open_by_url(sheet_url)
+            worksheet = sh.get_worksheet(0) # Get the first sheet
+            
+            # get_all_records() returns a list of dictionaries
+            data = worksheet.get_all_records()
+            df = pd.DataFrame(data)
+            df['date'] = pd.to_datetime(df['date'], dayfirst=True, format='mixed', errors='coerce')
+                
+            sys.stderr.write(f"Successfully loaded {len(df)} rows securely via Google API.\n")
+            return df
+            
         except Exception as e:
-            print(f"Error loading from Google Sheets: {e}")
-            print("Note: Ensure the Google Sheet is set to 'Anyone with the link can view' for this simple method.")
+            import sys
+            sys.stderr.write(f"Error loading from Google Sheets via gspread: {repr(e)}\n")
             raise e
 
 # Example usage

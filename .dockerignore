@@ -1,0 +1,14 @@
+# Ignore the virtual environment (it's for Windows, the container uses Linux!)
+venv/
+
+# Ignore Python cache files
+__pycache__/
+*.pyc
+
+# Ignore previously generated PDFs to save space
+*.pdf
+*.png
+
+# Ignore Git files
+.git/
+.gitignore
