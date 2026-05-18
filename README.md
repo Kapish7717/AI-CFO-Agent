@@ -50,8 +50,11 @@ The system is modularized using the **Model Context Protocol (MCP)**:
    pip install -r requirements.txt
    ```
 
-3. **Set up Google Auth:**
-   The agent requires a `credentials.json` from Google Cloud. When you trigger an email or calendar action for the first time, the UI will provide a secure login link.
+3. **Set up Google Auth (MANDATORY FIRST STEP):**
+   The agent requires access to Google Services (Gmail, Calendar, Sheets) to fully function. You **must** authenticate before giving the agent any financial tasks:
+   - Place your Google Cloud `credentials.json` in the project's root directory (or securely add it as a secret on Hugging Face).
+   - Once the app is running, go to the **"🔑 Google Auth"** tab in the UI.
+   - Click "Get Login Link", authorize the app in your browser, and paste the provided code back into the UI to complete the setup.
 
 4. **Run the Application:**
    ```bash
