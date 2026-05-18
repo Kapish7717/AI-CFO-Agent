@@ -28,6 +28,7 @@ The **AI CFO Agent** is an end-to-end autonomous financial analysis application 
 
 The system is modularized using the **Model Context Protocol (MCP)**:
 - **Client (Frontend):** A Gradio chat interface (`gradio_app.py`) for user interaction and budget configuration.
+- **API Backend:** A FastAPI application (`api.py`) that handles asynchronous streaming of the agent's thoughts to the frontend and manages the Google OAuth flow.
 - **Agent Orchestrator:** LangGraph orchestrates the sequential execution (Ingestion ➡️ Analysis ➡️ Reporting).
 - **FastMCP Server:** Exposes core Python financial scripts as standardized tools to the AI agent (`mcp_client.py`).
 
