@@ -12,30 +12,41 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 
 load_dotenv()
 
-GROQ_MODEL = "llama-3.1-8b-instant"
+GROQ_MODEL = "llama-3.3-70b-versatile"
 
 # --- 1. AGENT STATE DEFINITION ---
 class AgentState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], operator.add]
 
-# --- 2. MCP CONFIGURATION ---
+# --- 2. GLOBAL CACHE ---
+_mcp_client = None
+_all_tools = None
+_llm_with_tools = None
+
+# Robust API Key loading (strips potential quotes/spaces from Docker --env-file)
+raw_key = os.environ.get("GROQ_API_KEY", "")
+GROQ_API_KEY = raw_key.strip().strip('"').strip("'")
+
+# Crucial: Export the cleaned key back to os.environ so subprocesses (tools) can see it
+os.environ["GROQ_API_KEY"] = GROQ_API_KEY
+
+# --- 3. MCP CONFIGURATION ---
+# We define this AFTER cleaning the environment so the subprocess inherits the clean keys
 mcp_config = {
     "cfo_core": {
         "command": sys.executable,
         "args": ["mcp_client.py"],
         "transport": "stdio",
+        "env": os.environ.copy() # Explicitly pass the cleaned environment
     }
 }
 
-# --- 3. GLOBAL CACHE ---
-# FIX 4: No module-level MultiServerMCPClient instantiation.
-#         It must be used as an async context manager so the stdio subprocess starts properly.
-# FIX 1: Cache the bound LLM so bind_tools() is not called on every agent invocation.
-_mcp_client = None
-_all_tools = None
-_llm_with_tools = None
+llm = ChatGroq(model=GROQ_MODEL, temperature=0, groq_api_key=GROQ_API_KEY)
 
-llm = ChatGroq(model=GROQ_MODEL, temperature=0, groq_api_key=os.environ.get("GROQ_API_KEY"))
+if GROQ_API_KEY:
+    print(f"[AGENT] Groq API Key found: {GROQ_API_KEY[:10]}...", flush=True)
+else:
+    print("[AGENT ERROR] Groq API Key NOT found in environment!", flush=True)
 
 
 async def get_all_tools():
@@ -92,16 +103,18 @@ async def call_model(state: AgentState):
         "You are an expert autonomous CFO AI agent. "
         "You MUST call tools in this exact sequence for the core financial workflow. Never skip a step. Never summarize instead of calling a tool.\n\n"
         "MANDATORY SEQUENCE — call each tool one at a time, wait for result, then call the next:\n"
-        "STEP 1: ingest_financial_data — always first\n"
-        "STEP 2: detect_financial_anomalies — always second\n"
-        "STEP 3: generate_cfo_pdf_report — always third, even if no anomalies found\n"
-        "STEP 4: send_email_report — always fourth\n"
-        "STEP 5: schedule_meeting — optional, call this fifth if the user requested a meeting or if you find critical budget breaches that require a review.\n\n"
+        "STEP 1: authenticate_google — ALWAYS call this with NO arguments first. NEVER invent, guess, or hallucinate an auth_code. If the tool returns a link, YOU MUST STOP and wait for the user. Only pass 'auth_code' if the user literally just provided it in their last message.\n"
+        "STEP 2: ingest_financial_data — only after Step 1 is successful.\n"
+        "STEP 3: detect_financial_anomalies — always third.\n"
+        "STEP 4: generate_cfo_pdf_report — always fourth.\n"
+        "STEP 5: send_email_report — always fifth.\n"
+        "STEP 6: schedule_meeting — optional, call this sixth if requested.\n\n"
         "RULES:\n"
         "- You MUST call generate_cfo_pdf_report after detect_financial_anomalies. No exceptions.\n"
         "- If the user makes a specific request about the report format or content (e.g. 'show monthly revenue at the end'), pass that request as 'custom_instructions' to generate_cfo_pdf_report.\n"
         "- You MUST call send_email_report after generate_cfo_pdf_report. No exceptions.\n"
         "- Do NOT write a summary or explanation between steps. Only make tool calls.\n"
+        "- When passing Windows file paths (starting with C:\\), ensure you escape backslashes correctly in the JSON argument.\n"
         "- Only after ALL requested actions (including email and meeting if applicable) succeed, write a final one-line confirmation.\n\n"
         "FRONTEND INPUT FORMAT:\n"
         "- BUDGET_LIMITS: parse into a dict {Category: Amount}\n"
@@ -206,17 +219,17 @@ builder.add_edge("tools", "agent")
 graph = builder.compile()
 
 
-async def main():
-    print("\n--- TOOL VERIFICATION ---")
-    available_tools = await get_all_tools()
-    if available_tools:
-        print(f"PASS: Agent found {len(available_tools)} tools.")
-        for i, t in enumerate(available_tools):
-            print(f"  {i+1}. {t.name}")
-    else:
-        print("FAIL: Agent could not find any tools.")
-    print("------------------------\n")
+# async def main():
+#     print("\n--- TOOL VERIFICATION ---")
+#     available_tools = await get_all_tools()
+#     if available_tools:
+#         print(f"PASS: Agent found {len(available_tools)} tools.")
+#         for i, t in enumerate(available_tools):
+#             print(f"  {i+1}. {t.name}")
+#     else:
+#         print("FAIL: Agent could not find any tools.")
+#     print("------------------------\n")
 
-if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+# if __name__ == "__main__":
+#     import asyncio
+#     asyncio.run(main())

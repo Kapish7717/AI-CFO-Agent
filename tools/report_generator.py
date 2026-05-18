@@ -13,8 +13,6 @@ from langchain_groq import ChatGroq
 import os
 import json
 import sys
-from dotenv import load_dotenv
-load_dotenv()
 
 GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant")
 
@@ -60,8 +58,12 @@ class ReportGenerator:
 
     def generate_llm_narrative(self) -> dict:
         sys.stderr.write("[REPORT GEN] Starting LLM narrative generation...\n")
-        if not os.environ.get("GROQ_API_KEY"):
-            sys.stderr.write("[REPORT GEN WARNING] No GROQ_API_KEY found. Skipping narrative.\n")
+        
+        raw_key = os.environ.get("GROQ_API_KEY", "")
+        api_key = raw_key.strip().strip('"').strip("'")
+
+        if not api_key:
+            sys.stderr.write("[REPORT GEN WARNING] No valid GROQ_API_KEY found. Skipping narrative.\n")
             return {
                 "exec": "LLM narrative generation skipped. GROQ_API_KEY missing.",
                 "rev": "N/A", "exp": "N/A", "anom": "N/A", "rec": "N/A", "custom": "N/A"
@@ -136,7 +138,7 @@ Section 6: Custom Request Response (Directly address the USER SPECIFIC REQUEST a
             client = ChatGroq(
                 model=GROQ_MODEL,
                 temperature=0.3,
-                groq_api_key=os.environ.get("GROQ_API_KEY"),
+                groq_api_key=api_key,
                 request_timeout=60.0
             )
             
@@ -238,13 +240,22 @@ Section 6: Custom Request Response (Directly address the USER SPECIFIC REQUEST a
             rev_trend = self.revenue.set_index('Date').resample('ME')['Amount'].sum() if not self.revenue.empty else pd.Series(dtype=float)
 
             trend_df = pd.DataFrame({'Revenue': rev_trend, 'Expense': exp_trend}).fillna(0)
+            
+            # Remove months with absolutely no activity to prevent huge gaps in charts
+            trend_df = trend_df[(trend_df['Revenue'] != 0) | (trend_df['Expense'] != 0)]
+
             if not trend_df.empty:
                 plt.figure(figsize=(8, 4))
-                ax = trend_df.plot(kind='line', marker='o', color=['#2ecc71', '#e74c3c'], linewidth=2)
+                ax = trend_df[['Revenue', 'Expense']].plot(kind='line', marker='o', color=['#2ecc71', '#e74c3c'], linewidth=2)
                 plt.title('Revenue vs Expense Comparison', fontsize=12)
                 plt.ylabel('Amount ($)')
                 plt.xlabel('Month')
                 plt.grid(True, linestyle='--', alpha=0.7)
+                
+                # Format X-axis labels nicely
+                nice_labels = [d.strftime('%b %Y') for d in trend_df.index]
+                plt.xticks(trend_df.index, nice_labels, rotation=45)
+                
                 plt.tight_layout()
                 charts['comp_trend'] = 'comp_trend.png'
                 handles, labels = ax.get_legend_handles_labels()
@@ -256,12 +267,15 @@ Section 6: Custom Request Response (Directly address the USER SPECIFIC REQUEST a
                 plt.figure(figsize=(8, 4))
                 trend_df['Profit'] = trend_df['Revenue'] - trend_df['Expense']
                 colors_bar = ['#2ecc71' if x >= 0 else '#e74c3c' for x in trend_df['Profit']]
-                trend_df['Profit'].plot(kind='bar', color=colors_bar)
+                
+                # Use range-based index for bar plot to prevent temporal spacing issues
+                plt.bar(range(len(trend_df)), trend_df['Profit'], color=colors_bar)
                 plt.title('Monthly Net Profit Margin', fontsize=12)
                 plt.ylabel('Amount ($)')
                 plt.xlabel('Month')
                 nice_labels = [d.strftime('%b %Y') for d in trend_df.index]
                 plt.xticks(range(len(nice_labels)), nice_labels, rotation=45)
+                plt.grid(axis='y', linestyle='--', alpha=0.7)
                 plt.tight_layout()
                 charts['profit_bar'] = 'profit_bar.png'
                 plt.savefig(charts['profit_bar'], dpi=150)

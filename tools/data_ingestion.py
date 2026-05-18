@@ -104,7 +104,9 @@ class DataIngestion:
             
         except Exception as e:
             import sys
+            import traceback
             sys.stderr.write(f"Error loading from Google Sheets via gspread: {repr(e)}\n")
+            sys.stderr.write(f"TRACEBACK: {traceback.format_exc()}\n")
             raise e
 
 # Example usage

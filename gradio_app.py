@@ -296,11 +296,26 @@ def update_monthly_view(month_name):
     spend, rev, profit, fig = get_monthly_details(month_name)
     return spend, rev, profit, fig
 
+def get_auth_link():
+    try:
+        response = httpx.get("http://localhost:8000/auth/url")
+        url = response.json().get("url")
+        return f"### 🔗 [Click here to Login with Google]({url})\n\n1. Click the link above (opens in a new tab).\n2. Authorize the application.\n3. Copy the code from the address bar.\n4. Paste it below.", gr.update(visible=True)
+    except Exception as e:
+        return f"❌ Error: {e}", gr.update(visible=False)
+
+def submit_auth_code(code):
+    try:
+        response = httpx.post("http://localhost:8000/auth/exchange", json={"code": code})
+        return response.json().get("message")
+    except Exception as e:
+        return f"❌ Error: {e}"
+
 with gr.Blocks(title="AI CFO Agent") as demo:
     gr.HTML("<h1 style='text-align: center;'>💼 Autonomous AI CFO</h1>")
-    gr.HTML("<p class='subtitle' style='text-align: center;'>Your personal executive financial agent. Ask it to analyze data, find anomalies, and report findings.</p>")
+    gr.HTML("<p class='subtitle' style='text-align: center;'>Your personal executive financial agent. Analyze data, detect anomalies, and report findings.</p>")
     
-    # Pre-define dashboard components to avoid NameError in Chat Tab
+    # Pre-define dashboard components
     month_slider = gr.Slider(label="Months to View", minimum=1, maximum=10, step=1, value=5, render=False)
     month_selector = gr.Radio(label="Select Month", choices=[], interactive=True, render=False)
     val_spend = gr.HTML(value="<div class='metric-value'>$0.00</div><div class='metric-title'>Total Expenses</div>", render=False)
@@ -315,19 +330,15 @@ with gr.Blocks(title="AI CFO Agent") as demo:
             with gr.Row():
                 # Left Sidebar (Parameters)
                 with gr.Column(scale=1, elem_classes=["sidebar-panel"]):
-                    gr.Markdown("### ⚙️ Parameters", elem_classes=["sidebar-header"])
-                    gr.Markdown("Provide your expense data via CSV **or** Google Sheets URL.")
-                    
+                    gr.Markdown("### ⚙️ Parameters")
                     expense_file = gr.File(label="Upload Expense CSV", file_types=[".csv"])
                     gr.Markdown("*OR*")
-                    expense_url = gr.Textbox(label="Expense Google Sheets URL", placeholder="https://docs.google.com/...", info="Leave empty if using file upload.")
+                    expense_url = gr.Textbox(label="Expense Google Sheets URL", placeholder="https://docs.google.com/...")
                     
                     gr.Markdown("---")
-                    gr.Markdown("Provide your revenue data via CSV **or** Google Sheets URL.")
                     revenue_file = gr.File(label="Upload Revenue CSV", file_types=[".csv"])
                     gr.Markdown("*OR*")
-                    revenue_url = gr.Textbox(label="Revenue Google Sheets URL (Optional)", placeholder="https://docs.google.com/...", info="Leave empty if using file upload.")
-                    
+                    revenue_url = gr.Textbox(label="Revenue Google Sheets URL", placeholder="https://docs.google.com/...")
                     
                     gr.Markdown("---")
                     gr.Markdown("### 💰 Budget Limits")
@@ -335,11 +346,7 @@ with gr.Blocks(title="AI CFO Agent") as demo:
                     budget_operations = gr.Number(label="Operations Budget ($)", value=8000)
                     budget_travel = gr.Number(label="Travel Budget ($)", value=2000)
                     
-                    gr.Markdown("---")
-                    gr.Markdown("### 🚀 Capabilities")
-                    gr.Markdown("- ✅ Data Ingestion\n- ✅ Anomaly Detection\n- ✅ PDF Report Generation\n- ✅ Email Dispatch\n- ✅ Calendar Scheduling")
-                    
-                    pdf_download = gr.File(label="📄 Download CFO Report", visible=False, interactive=False)
+                    pdf_download = gr.File(label="📄 Download CFO Report", visible=False)
                     
                 # Right Chat Interface
                 with gr.Column(scale=3):
@@ -347,85 +354,58 @@ with gr.Blocks(title="AI CFO Agent") as demo:
                     agent_steps = gr.Markdown("⏳ Waiting for request...", elem_id="agent-steps")
                     chatbot = gr.Chatbot(label="Chat History", height=500)
                     with gr.Row():
-                        msg = gr.Textbox(
-                            label="Your Request", 
-                            placeholder="E.g., Analyze my sheets, generate a report, and email it to my team...", 
-                            scale=8,
-                            lines=2
-                        )
+                        msg = gr.Textbox(label="Your Request", placeholder="E.g., Analyze my sheets and email a report...", scale=8)
                         submit_btn = gr.Button("Send 🚀", variant="primary", scale=1)
                     clear = gr.ClearButton([msg, chatbot], value="Clear History 🗑️")
 
-            # Connect chat components
-            submit_event = submit_btn.click(
-                respond, 
-                inputs=[msg, chatbot, expense_file, expense_url, revenue_file, revenue_url, budget_marketing, budget_operations, budget_travel], 
-                outputs=[msg, chatbot, pdf_download, agent_steps]
-            )
-            
-            # AUTOMATIC UPDATE: After agent finishes, refresh the dashboard metrics
-            submit_event.then(
-                update_overview,
-                inputs=[month_slider],
-                outputs=[val_spend, val_anom, val_burn, plot_trend, val_time, month_selector]
-            )
-
-            msg_submit_event = msg.submit(
-                respond, 
-                inputs=[msg, chatbot, expense_file, expense_url, revenue_file, revenue_url, budget_marketing, budget_operations, budget_travel], 
-                outputs=[msg, chatbot, pdf_download, agent_steps]
-            )
-            
-            # AUTOMATIC UPDATE: After agent finishes, refresh the dashboard metrics
-            msg_submit_event.then(
-                update_overview,
-                inputs=[month_slider],
-                outputs=[val_spend, val_anom, val_burn, plot_trend, val_time, month_selector]
-            )
+            submit_btn.click(respond, inputs=[msg, chatbot, expense_file, expense_url, revenue_file, revenue_url, budget_marketing, budget_operations, budget_travel], outputs=[msg, chatbot, pdf_download, agent_steps]).then(update_overview, inputs=[month_slider], outputs=[val_spend, val_anom, val_burn, plot_trend, val_time, month_selector])
+            msg.submit(respond, inputs=[msg, chatbot, expense_file, expense_url, revenue_file, revenue_url, budget_marketing, budget_operations, budget_travel], outputs=[msg, chatbot, pdf_download, agent_steps]).then(update_overview, inputs=[month_slider], outputs=[val_spend, val_anom, val_burn, plot_trend, val_time, month_selector])
 
         # --- TAB 2: Dashboard ---
         with gr.Tab("📊 Dashboard") as dashboard_tab:
             with gr.Row():
-                # Left Sidebar for Dashboard
                 with gr.Column(scale=1, elem_classes=["sidebar-panel"]):
                     gr.Markdown("### 📅 History Explorer")
                     month_slider.render()
                     refresh_dashboard_btn = gr.Button("🔄 Sync Data", variant="secondary")
                     month_selector.render()
-                
-                # Right Main Dashboard
                 with gr.Column(scale=3):
                     gr.Markdown("### 📈 Executive Overview")
                     with gr.Row():
-                        with gr.Column(elem_classes=["metric-card"]):
-                            val_spend.render()
-                        with gr.Column(elem_classes=["metric-card"]):
-                            val_anom.render()
-                        with gr.Column(elem_classes=["metric-card"]):
-                            val_burn.render()
-                    
-                    with gr.Row():
-                        plot_trend.render()
-                    
-                    gr.Markdown("---")
+                        with gr.Column(elem_classes=["metric-card"]): val_spend.render()
+                        with gr.Column(elem_classes=["metric-card"]): val_anom.render()
+                        with gr.Column(elem_classes=["metric-card"]): val_burn.render()
+                    plot_trend.render()
                     gr.Markdown("### 🗓️ Monthly Deep Dive")
                     with gr.Row():
                         with gr.Column():
                             m_val_spend = gr.Textbox(label="Month Spend", interactive=False)
                             m_val_rev = gr.Textbox(label="Month Revenue", interactive=False)
                             m_val_profit = gr.Textbox(label="Month Profit/Loss", interactive=False)
-                        with gr.Column(scale=2):
-                            m_plot = gr.Plot(label="Monthly Category Breakdown")
-                    
-                    with gr.Row():
-                        val_time.render()
+                        with gr.Column(scale=2): m_plot = gr.Plot(label="Monthly Category Breakdown")
+                    val_time.render()
             
-
-                
             refresh_dashboard_btn.click(update_overview, inputs=[month_slider], outputs=[val_spend, val_anom, val_burn, plot_trend, val_time, month_selector])
             month_slider.change(update_overview, inputs=[month_slider], outputs=[val_spend, val_anom, val_burn, plot_trend, val_time, month_selector])
             month_selector.change(update_monthly_view, inputs=[month_selector], outputs=[m_val_spend, m_val_rev, m_val_profit, m_plot])
             dashboard_tab.select(update_overview, inputs=[month_slider], outputs=[val_spend, val_anom, val_burn, plot_trend, val_time, month_selector])
+
+        # --- TAB 3: Google Auth ---
+        with gr.Tab("🔑 Google Auth"):
+            gr.Markdown("### 🔓 Google Services Authentication")
+            gr.Markdown("If you haven't uploaded `token.json`, use this tab to authorize the agent to access Gmail, Calendar, and Sheets.")
+            
+            with gr.Row():
+                get_link_btn = gr.Button("1. Get Login Link 🔗", variant="primary")
+                auth_status = gr.Markdown("Click the button to start.")
+            
+            with gr.Column(visible=False) as auth_input_col:
+                auth_code_input = gr.Textbox(label="2. Paste Authorization Code", placeholder="Paste the code from your browser here...")
+                submit_code_btn = gr.Button("3. Complete Authentication ✅", variant="secondary")
+                result_msg = gr.Markdown("")
+            
+            get_link_btn.click(get_auth_link, outputs=[auth_status, auth_input_col])
+            submit_code_btn.click(submit_auth_code, inputs=[auth_code_input], outputs=[result_msg])
 
 if __name__ == "__main__":
     demo.launch(server_name="0.0.0.0", server_port=7860, share=False, theme=theme, css=css)

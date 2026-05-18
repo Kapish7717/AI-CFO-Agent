@@ -6,13 +6,49 @@ import base64
 import asyncio
 import mimetypes
 import pandas as pd
-from google_auth import get_gmail_service, get_calendar_service
+from tools.report_generator import ReportGenerator
+from google_auth import get_gmail_service, get_calendar_service, get_auth_url, exchange_code_for_token, is_authenticated, get_google_credentials
 from email.message import EmailMessage
 from tools.data_ingestion import DataIngestion
 from tools.anomaly_detection import detect_all_anomalies
-from tools.report_generator import ReportGenerator
 
 mcp = FastMCP("CFO_Central_Server")
+
+@mcp.tool()
+async def authenticate_google(auth_code: str = None) -> str:
+    """
+    Handles Google OAuth authentication. 
+    1. Call WITHOUT any arguments first to get the Login URL for the user.
+    2. After the user provides a real code, call this again WITH the 'auth_code' argument.
+    """
+    if is_authenticated() and not auth_code:
+        return "Success: Already authenticated with Google. You can proceed to financial steps."
+
+    if not auth_code:
+        try:
+            # This will automatically open a tab if local, or raise Exception if cloud
+            get_google_credentials()
+            return "Success: Authenticated with Google. You can proceed."
+        except Exception as e:
+            if "AUTH_REQUIRED" in str(e):
+                url = get_auth_url()
+                return (
+                    "--- GOOGLE AUTH REQUIRED ---\n"
+                    "Please follow these steps to log in:\n"
+                    f"1. Visit this URL: {url}\n"
+                    "2. Log in and allow permissions.\n"
+                    "3. Copy the code from the address bar (after 'code=').\n"
+                    "4. Paste that code into this chat.\n"
+                )
+            return f"Error during authentication: {e}"
+    
+    if auth_code:
+        # Safety check for LLM hallucination (repetitive strings)
+        if len(auth_code) > 200 or "T4y" in auth_code or "4/0AYyRw" in auth_code and len(auth_code) > 500:
+            return "ERROR: That looks like a hallucinated or invalid code. Please STOP and ask the user for the real code from their browser."
+
+    result = exchange_code_for_token(auth_code)
+    return result
 
 # Configuration for shared state
 STATE_FILE = "current_financial_state.pkl"

@@ -4,11 +4,24 @@ from fastapi.responses import StreamingResponse
 import json
 import asyncio
 from agent import graph
+from google_auth import get_auth_url, exchange_code_for_token
 
 app = FastAPI(title="AI CFO Agent API")
 
 class ChatRequest(BaseModel):
     prompt: str
+
+class AuthExchangeRequest(BaseModel):
+    code: str
+
+@app.get("/auth/url")
+async def get_google_auth_url():
+    return {"url": get_auth_url()}
+
+@app.post("/auth/exchange")
+async def exchange_google_code(request: AuthExchangeRequest):
+    result = exchange_code_for_token(request.code)
+    return {"message": result}
 
 @app.post("/stream")
 async def stream_chat(request: ChatRequest):
