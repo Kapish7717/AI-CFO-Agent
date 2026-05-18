@@ -115,6 +115,7 @@ async def call_model(state: AgentState):
         "- You MUST call send_email_report after generate_cfo_pdf_report. No exceptions.\n"
         "- Do NOT write a summary or explanation between steps. Only make tool calls.\n"
         "- When passing Windows file paths (starting with C:\\), ensure you escape backslashes correctly in the JSON argument.\n"
+        "- NEVER call the same tool twice in a row. If a tool returns an error, DO NOT retry it. Stop and tell the user about the error.\n"
         "- Only after ALL requested actions (including email and meeting if applicable) succeed, write a final one-line confirmation.\n\n"
         "FRONTEND INPUT FORMAT:\n"
         "- BUDGET_LIMITS: parse into a dict {Category: Amount}\n"
@@ -122,17 +123,11 @@ async def call_model(state: AgentState):
         "- REVENUE_FILE_PATH: pass to ingest_financial_data\n"
         "- EXPENSE_SHEET_URL / REVENUE_SHEET_URL: Google Sheet URLs\n"
         "- Target email/attendees are mentioned in natural language (e.g. 'send to mfkapish@gmail.com' or 'invite team@example.com')\n"
-        "- Meeting times: If the user says 'tomorrow at 10am', calculate the ISO string based on current time (Current local time is: 2026-05-15T11:21:39+05:30).\n"
+        "- Meeting times: If the user says 'tomorrow at 10am', calculate the ISO string based on current time.\n"
     ))
-
-    messages = state.get("messages", [])
 
     sys.stderr.write(f"\n[AGENT] Calling Groq LLM ({GROQ_MODEL})...\n")
     response = await llm_bound.ainvoke([system_prompt] + list(messages))
-
-    # Keep one tool call at a time for graph stability
-    if hasattr(response, "tool_calls") and len(response.tool_calls) > 1:
-        response.tool_calls = [response.tool_calls[0]]
 
     return {"messages": [response]}
 
