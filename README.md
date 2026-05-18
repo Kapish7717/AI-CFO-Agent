@@ -9,6 +9,8 @@ pinned: false
 
 # 🤖 AI CFO Agent
 
+[![Live Demo on Hugging Face Spaces](https://img.shields.io/badge/%F0%9F%A4%97%20Live%20Demo-Hugging%20Face%20Spaces-blue?style=for-the-badge)](https://huggingface.co/spaces/Kaps07/AI-CFO-AGENT)
+
 > Your Autonomous Financial Command Center. Ingest data, detect anomalies, generate professional PDF reports, and schedule meetings seamlessly.
 
 The **AI CFO Agent** is an end-to-end autonomous financial analysis application built with modern AI architectures. It leverages the **Model Context Protocol (MCP)** to equip a Large Language Model with dynamic tools for data processing, budget monitoring, and automated email reporting.
