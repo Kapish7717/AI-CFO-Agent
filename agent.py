@@ -14,30 +14,24 @@ load_dotenv()
 
 GROQ_MODEL = "llama-3.3-70b-versatile"
 
-# --- 1. AGENT STATE DEFINITION ---
 class AgentState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], operator.add]
 
-# --- 2. GLOBAL CACHE ---
 _mcp_client = None
 _all_tools = None
 _llm_with_tools = None
 
-# Robust API Key loading (strips potential quotes/spaces from Docker --env-file)
 raw_key = os.environ.get("GROQ_API_KEY", "")
 GROQ_API_KEY = raw_key.strip().strip('"').strip("'")
 
-# Crucial: Export the cleaned key back to os.environ so subprocesses (tools) can see it
 os.environ["GROQ_API_KEY"] = GROQ_API_KEY
 
-# --- 3. MCP CONFIGURATION ---
-# We define this AFTER cleaning the environment so the subprocess inherits the clean keys
 mcp_config = {
     "cfo_core": {
         "command": sys.executable,
         "args": ["mcp_client.py"],
         "transport": "stdio",
-        "env": os.environ.copy() # Explicitly pass the cleaned environment
+        "env": os.environ.copy() 
     }
 }
 
