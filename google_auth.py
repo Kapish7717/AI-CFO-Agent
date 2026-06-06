@@ -110,7 +110,7 @@ def get_google_credentials():
 # Global storage for the auth flow to handle PKCE (code_verifier)
 _active_flows = {}
 
-def get_auth_url():
+def get_auth_url(redirect_uri='http://localhost'):
     """Returns a URL the user can visit to authorize the app."""
     creds_dict = get_credentials_dict()
     if not creds_dict:
@@ -120,7 +120,7 @@ def get_auth_url():
     flow = Flow.from_client_config(
         creds_dict, 
         SCOPES, 
-        redirect_uri='http://localhost'
+        redirect_uri=redirect_uri
     )
     auth_url, state = flow.authorization_url(prompt='consent', access_type='offline')
     
@@ -128,7 +128,7 @@ def get_auth_url():
     _active_flows[state] = flow
     return auth_url
 
-def exchange_code_for_token(code):
+def exchange_code_for_token(code, redirect_uri='http://localhost'):
     """Exchanges an authorization code for a token and saves it."""
     creds_dict = get_credentials_dict()
     if not creds_dict:
@@ -147,7 +147,7 @@ def exchange_code_for_token(code):
             flow = Flow.from_client_config(
                 creds_dict, 
                 SCOPES, 
-                redirect_uri='http://localhost'
+                redirect_uri=redirect_uri
             )
             
         flow.fetch_token(code=code)
