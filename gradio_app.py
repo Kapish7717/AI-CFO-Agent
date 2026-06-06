@@ -11,45 +11,323 @@ API_URL = "http://localhost:8000/stream"
 
 # Custom CSS for a beautiful, modern look
 css = """
+/* Import Outfit and Inter Font */
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;700;800&family=Inter:wght@400;500;600;700&display=swap');
+
+/* Default Style Variables (matching Soft Blue) */
 .gradio-container {
     font-family: 'Inter', system-ui, -apple-system, sans-serif !important;
+    --primary-50: #eff6ff;
+    --primary-100: #dbeafe;
+    --primary-200: #bfdbfe;
+    --primary-300: #93c5fd;
+    --primary-400: #60a5fa;
+    --primary-500: #3b82f6;
+    --primary-600: #2563eb;
+    --primary-700: #1d4ed8;
+    --primary-800: #1e40af;
+    --primary-900: #1e3a8a;
+    --primary-950: #172554;
+    --body-background-fill: #f8fafc;
+    --background-fill-primary: #ffffff;
+    --background-fill-secondary: #f1f5f9;
+    --border-color-primary: #e2e8f0;
 }
-h1 {
-    color: #1E3A8A;
-    font-weight: 800;
-    margin-bottom: 0.5rem;
+
+/* Theme variables mapping */
+.theme-soft {
+    --primary-50: #eff6ff;
+    --primary-100: #dbeafe;
+    --primary-200: #bfdbfe;
+    --primary-300: #93c5fd;
+    --primary-400: #60a5fa;
+    --primary-500: #3b82f6;
+    --primary-600: #2563eb;
+    --primary-700: #1d4ed8;
+    --primary-800: #1e40af;
+    --primary-900: #1e3a8a;
+    --primary-950: #172554;
+    --body-background-fill: #f8fafc;
+    --background-fill-primary: #ffffff;
+    --background-fill-secondary: #f1f5f9;
+    --border-color-primary: #e2e8f0;
 }
-p.subtitle {
-    color: #4B5563;
-    font-size: 1.1rem;
-    margin-bottom: 2rem;
-    font-weight: 500;
+
+.theme-midnight {
+    --primary-50: #faf5ff;
+    --primary-100: #f3e8ff;
+    --primary-200: #e9d5ff;
+    --primary-300: #d8b4fe;
+    --primary-400: #c084fc;
+    --primary-500: #a855f7;
+    --primary-600: #9333ea;
+    --primary-700: #7e22ce;
+    --primary-800: #6b21a8;
+    --primary-900: #581c87;
+    --primary-950: #3b0764;
+    --body-background-fill: #0b071a;
+    --background-fill-primary: #150f2b;
+    --background-fill-secondary: #1f173d;
+    --border-color-primary: #2e1f57;
+    --block-border-color: #2e1f57;
+    --neutral-50: #f5f3ff;
+    --neutral-100: #ede9fe;
+    --neutral-200: #ddd6fe;
+    --neutral-300: #c084fc;
+    --neutral-400: #a78bfa;
+    --neutral-500: #8b5cf6;
+    --neutral-600: #7c3aed;
+    --neutral-700: #6d28d9;
+    --neutral-800: #1a1033;
+    --neutral-900: #120b24;
+    --neutral-950: #090514;
 }
+
+.theme-emerald {
+    --primary-50: #f0fdf4;
+    --primary-100: #dcfce7;
+    --primary-200: #bbf7d0;
+    --primary-300: #86efac;
+    --primary-400: #4ade80;
+    --primary-500: #10b981;
+    --primary-600: #059669;
+    --primary-700: #047857;
+    --primary-800: #065f46;
+    --primary-900: #064e3b;
+    --primary-950: #022c22;
+    --body-background-fill: #fcfdfd;
+    --background-fill-primary: #ffffff;
+    --background-fill-secondary: #f0fdf4;
+    --border-color-primary: #d1fae5;
+}
+
+.theme-amber {
+    --primary-50: #fffbeb;
+    --primary-100: #fef3c7;
+    --primary-200: #fde68a;
+    --primary-300: #fcd34d;
+    --primary-400: #fbbf24;
+    --primary-500: #f59e0b;
+    --primary-600: #d97706;
+    --primary-700: #b45309;
+    --primary-800: #92400e;
+    --primary-900: #78350f;
+    --primary-950: #451a03;
+    --body-background-fill: #fdfbf7;
+    --background-fill-primary: #ffffff;
+    --background-fill-secondary: #fef3c7;
+    --border-color-primary: #fef3c7;
+}
+
+.theme-ocean {
+    --primary-50: #f0f9ff;
+    --primary-100: #e0f2fe;
+    --primary-200: #bae6fd;
+    --primary-300: #7dd3fc;
+    --primary-400: #38bdf8;
+    --primary-500: #0ea5e9;
+    --primary-600: #0284c7;
+    --primary-700: #0369a1;
+    --primary-800: #075985;
+    --primary-900: #0c4a6e;
+    --primary-950: #082f49;
+    --body-background-fill: #f0f9ff;
+    --background-fill-primary: #ffffff;
+    --background-fill-secondary: #e0f2fe;
+    --border-color-primary: #e0f2fe;
+}
+
+/* Base Styles overrides */
+.gradio-container {
+    background-color: var(--body-background-fill) !important;
+    transition: background-color 0.4s ease, color 0.4s ease;
+}
+
+/* Premium Navbar Header */
+#navbar {
+    background: linear-gradient(135deg, var(--primary-900) 0%, var(--primary-800) 100%) !important;
+    padding: 1.25rem 2rem !important;
+    border-radius: 20px !important;
+    margin-bottom: 2rem !important;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.05) !important;
+    display: flex !important;
+    align-items: center !important;
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+}
+
+.brand {
+    display: flex !important;
+    align-items: center !important;
+    gap: 1.25rem !important;
+}
+
+.brand-logo {
+    font-size: 2.75rem !important;
+    background: rgba(255, 255, 255, 0.15) !important;
+    padding: 0.5rem !important;
+    border-radius: 12px !important;
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05) !important;
+}
+
+.brand-title {
+    font-family: 'Outfit', sans-serif !important;
+    font-size: 2.2rem !important;
+    font-weight: 800 !important;
+    color: white !important;
+    margin: 0 !important;
+    line-height: 1.1 !important;
+    letter-spacing: -0.03em !important;
+}
+
+.brand-subtitle {
+    font-family: 'Inter', sans-serif !important;
+    font-size: 0.95rem !important;
+    color: var(--primary-200) !important;
+    margin: 0.25rem 0 0 0 !important;
+    font-weight: 500 !important;
+}
+
+#theme-column {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-end !important;
+}
+
+#theme-dropdown {
+    width: 100% !important;
+    max-width: 220px !important;
+    background: rgba(255, 255, 255, 0.1) !important;
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+    border-radius: 10px !important;
+    color: white !important;
+}
+
+#theme-dropdown label span {
+    color: var(--primary-200) !important;
+    font-weight: 600 !important;
+    font-size: 0.8rem !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.05em !important;
+}
+
+#theme-dropdown select {
+    background-color: var(--primary-900) !important;
+    color: white !important;
+}
+
+/* Sidebar and Panel Enhancements */
 .sidebar-panel {
-    background-color: #F3F4F6;
-    padding: 1.5rem;
-    border-radius: 12px;
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    background-color: var(--background-fill-secondary) !important;
+    border: 1px solid var(--border-color-primary) !important;
+    border-radius: 18px !important;
+    padding: 1.75rem !important;
+    box-shadow: 0 4px 15px -3px rgba(0, 0, 0, 0.04) !important;
+    transition: background-color 0.4s ease, border-color 0.4s ease !important;
 }
+
+/* Metric Card Layouts */
 .metric-card {
-    background: white;
-    padding: 1.5rem;
-    border-radius: 10px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-    text-align: center;
-    border-top: 4px solid #3b82f6;
+    background: var(--background-fill-primary) !important;
+    border: 1px solid var(--border-color-primary) !important;
+    padding: 1.75rem !important;
+    border-radius: 18px !important;
+    box-shadow: 0 10px 20px -5px rgba(0, 0, 0, 0.03) !important;
+    text-align: center !important;
+    border-top: 4px solid var(--primary-500) !important;
+    transition: transform 0.25s ease, box-shadow 0.25s ease, background-color 0.4s ease, border-color 0.4s ease !important;
 }
+
+.metric-card:hover {
+    transform: translateY(-5px) !important;
+    box-shadow: 0 20px 30px -10px rgba(0, 0, 0, 0.08) !important;
+}
+
 .metric-value {
-    font-size: 2rem;
-    font-weight: 700;
-    color: #1e293b;
+    font-family: 'Outfit', sans-serif !important;
+    font-size: 2.3rem !important;
+    font-weight: 800 !important;
+    color: var(--primary-900) !important;
+    transition: color 0.4s ease !important;
 }
+
+.theme-midnight .metric-value {
+    color: var(--primary-200) !important;
+}
+
 .metric-title {
-    font-size: 0.9rem;
-    color: #64748b;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin-top: 0.5rem;
+    font-family: 'Inter', sans-serif !important;
+    font-size: 0.85rem !important;
+    font-weight: 600 !important;
+    color: var(--neutral-500) !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.08em !important;
+    margin-top: 0.5rem !important;
+}
+
+.theme-midnight .metric-title {
+    color: #a78bfa !important;
+}
+
+/* Beautiful custom slider and inputs */
+input[type="range"] {
+    accent-color: var(--primary-500) !important;
+}
+
+/* Tabs customization */
+button[role="tab"] {
+    font-family: 'Outfit', sans-serif !important;
+    font-weight: 700 !important;
+    font-size: 1.05rem !important;
+    padding: 0.75rem 1.5rem !important;
+    transition: color 0.3s ease, border-color 0.3s ease !important;
+}
+
+button[role="tab"][aria-selected="true"] {
+    color: var(--primary-600) !important;
+    border-bottom-color: var(--primary-600) !important;
+}
+
+.theme-midnight button[role="tab"][aria-selected="true"] {
+    color: var(--primary-300) !important;
+    border-bottom-color: var(--primary-300) !important;
+}
+
+/* Action button styling */
+button.primary {
+    background: linear-gradient(135deg, var(--primary-600) 0%, var(--primary-700) 100%) !important;
+    color: white !important;
+    border: none !important;
+    border-radius: 12px !important;
+    font-weight: 700 !important;
+    box-shadow: 0 4px 10px rgba(37, 99, 235, 0.2) !important;
+    transition: all 0.2s ease !important;
+}
+
+button.primary:hover {
+    background: linear-gradient(135deg, var(--primary-500) 0%, var(--primary-600) 100%) !important;
+    transform: translateY(-1px) !important;
+    box-shadow: 0 6px 15px rgba(37, 99, 235, 0.3) !important;
+}
+
+button.secondary {
+    background: var(--background-fill-primary) !important;
+    border: 1px solid var(--border-color-primary) !important;
+    color: var(--primary-700) !important;
+    border-radius: 12px !important;
+    font-weight: 600 !important;
+    transition: all 0.2s ease !important;
+}
+
+.theme-midnight button.secondary {
+    border: 1px solid var(--primary-800) !important;
+    color: var(--primary-300) !important;
+    background: var(--background-fill-secondary) !important;
+}
+
+button.secondary:hover {
+    transform: translateY(-1px) !important;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.05) !important;
 }
 """
 
@@ -296,13 +574,37 @@ def update_monthly_view(month_name):
     spend, rev, profit, fig = get_monthly_details(month_name)
     return spend, rev, profit, fig
 
+def check_auth_status():
+    try:
+        response = httpx.get("http://localhost:8000/auth/status")
+        authenticated = response.json().get("authenticated", False)
+        if authenticated:
+            status_markdown = """### 🟢 Status: Authenticated
+
+Your Google account is connected and authorized. The agent has access to Gmail, Calendar, and Sheets. 
+
+If you want to re-authenticate or switch accounts, you can use the button below."""
+            return status_markdown, gr.update(visible=True), gr.update(visible=False)
+        else:
+            status_markdown = """### 🔴 Status: Not Authenticated
+
+Google services are currently disconnected. You need to authorize the application to enable email, calendar scheduling, and sheets integration.
+
+1. Click **Get Login Link 🔗** below.
+2. In the new tab, sign in and authorize the application.
+3. The page will redirect and automatically complete authentication in the background."""
+            return status_markdown, gr.update(visible=True), gr.update(visible=True)
+    except Exception as e:
+        return f"### ⚠️ Status: Connection Error\n\nCould not reach the backend server: {e}", gr.update(visible=False), gr.update(visible=False)
+
 def get_auth_link():
     try:
         response = httpx.get("http://localhost:8000/auth/url")
         url = response.json().get("url")
-        return f"### 🔗 [Click here to Login with Google]({url})\n\n1. Click the link above (opens in a new tab).\n2. Authorize the application.\n3. Copy the code from the address bar.\n4. Paste it below.", gr.update(visible=True)
+        link_markdown = f"### 🔗 [Click here to Login with Google]({url})\n\n1. Click the link above to open the authentication page in a new tab.\n2. Authorize the application.\n3. Once you see the \"Authentication Successful\" message, return to this dashboard.\n4. If the automatic redirect doesn't work (e.g., cloud hosting firewalls), open the **Manual Authentication Fallback** section below and paste the code."
+        return link_markdown, gr.update(visible=True)
     except Exception as e:
-        return f"❌ Error: {e}", gr.update(visible=False)
+        return f"❌ Error retrieving login link: {e}", gr.update(visible=False)
 
 def submit_auth_code(code):
     try:
@@ -311,9 +613,49 @@ def submit_auth_code(code):
     except Exception as e:
         return f"❌ Error: {e}"
 
-with gr.Blocks(title="AI CFO Agent") as demo:
-    gr.HTML("<h1 style='text-align: center;'>💼 Autonomous AI CFO</h1>")
-    gr.HTML("<p class='subtitle' style='text-align: center;'>Your personal executive financial agent. Analyze data, detect anomalies, and report findings.</p>")
+with gr.Blocks(title="AI CFO Agent", theme=theme, css=css) as demo:
+    # Header Navbar
+    with gr.Row(elem_id="navbar"):
+        with gr.Column(scale=4, min_width=300):
+            gr.HTML("""
+            <div class="brand">
+                <span class="brand-logo">💼</span>
+                <div>
+                    <h1 class="brand-title">Autonomous AI CFO</h1>
+                    <p class="brand-subtitle">Your personal executive financial intelligence agent</p>
+                </div>
+            </div>
+            """)
+        with gr.Column(scale=1, min_width=150, elem_id="theme-column"):
+            theme_selector = gr.Dropdown(
+                choices=["Soft Blue", "Midnight Purple", "Emerald Forest", "Amber Warm", "Ocean Breeze"],
+                value="Soft Blue",
+                label="Select Theme Color",
+                interactive=True,
+                show_label=True,
+                elem_id="theme-dropdown"
+            )
+            
+    # Theme switching JS logic
+    theme_js = """
+    (themeName) => {
+        const themeMap = {
+            "Soft Blue": "theme-soft",
+            "Midnight Purple": "theme-midnight",
+            "Emerald Forest": "theme-emerald",
+            "Amber Warm": "theme-amber",
+            "Ocean Breeze": "theme-ocean"
+        };
+        const themeClass = themeMap[themeName] || "theme-soft";
+        const container = document.querySelector('.gradio-container');
+        if (container) {
+            container.classList.remove('theme-soft', 'theme-midnight', 'theme-emerald', 'theme-amber', 'theme-ocean');
+            container.classList.add(themeClass);
+        }
+        return themeName;
+    }
+    """
+    theme_selector.change(fn=None, inputs=[theme_selector], outputs=None, js=theme_js)
     
     # Pre-define dashboard components
     month_slider = gr.Slider(label="Months to View", minimum=1, maximum=10, step=1, value=5, render=False)
@@ -391,21 +733,35 @@ with gr.Blocks(title="AI CFO Agent") as demo:
             dashboard_tab.select(update_overview, inputs=[month_slider], outputs=[val_spend, val_anom, val_burn, plot_trend, val_time, month_selector])
 
         # --- TAB 3: Google Auth ---
-        with gr.Tab("🔑 Google Auth"):
+        with gr.Tab("🔑 Google Auth") as auth_tab:
             gr.Markdown("### 🔓 Google Services Authentication")
-            gr.Markdown("If you haven't uploaded `token.json`, use this tab to authorize the agent to access Gmail, Calendar, and Sheets.")
+            gr.Markdown("Authorize the agent to access Gmail, Calendar, and Sheets.")
             
-            with gr.Row():
-                get_link_btn = gr.Button("1. Get Login Link 🔗", variant="primary")
-                auth_status = gr.Markdown("Click the button to start.")
+            auth_status = gr.Markdown("Checking authentication status...")
             
-            with gr.Column(visible=False) as auth_input_col:
-                auth_code_input = gr.Textbox(label="2. Paste Authorization Code", placeholder="Paste the code from your browser here...")
-                submit_code_btn = gr.Button("3. Complete Authentication ✅", variant="secondary")
+            with gr.Row() as login_row:
+                get_link_btn = gr.Button("Get Login Link 🔗", variant="primary")
+                refresh_status_btn = gr.Button("🔄 Refresh Status", variant="secondary")
+            
+            link_display = gr.Markdown("", visible=False)
+            
+            with gr.Accordion("⚠️ Manual Authentication Fallback", open=False) as fallback_accordion:
+                gr.Markdown("If the automatic redirect doesn't work (e.g., firewall restriction), copy the `code=...` value from the redirected page's URL address bar and paste it below.")
+                auth_code_input = gr.Textbox(label="Paste Authorization Code", placeholder="E.g., 4/0AdkVLPy...")
+                submit_code_btn = gr.Button("Complete Manual Authentication ✅", variant="secondary")
                 result_msg = gr.Markdown("")
             
-            get_link_btn.click(get_auth_link, outputs=[auth_status, auth_input_col])
-            submit_code_btn.click(submit_auth_code, inputs=[auth_code_input], outputs=[result_msg])
+            # Event bindings
+            auth_tab.select(check_auth_status, outputs=[auth_status, login_row, link_display])
+            refresh_status_btn.click(check_auth_status, outputs=[auth_status, login_row, link_display])
+            
+            # Clicking get link button shows login link markdown
+            get_link_btn.click(get_auth_link, outputs=[link_display, link_display])
+            
+            # Manual code submit
+            submit_code_btn.click(submit_auth_code, inputs=[auth_code_input], outputs=[result_msg]).then(
+                check_auth_status, outputs=[auth_status, login_row, link_display]
+            )
 
 if __name__ == "__main__":
     demo.launch(server_name="0.0.0.0", server_port=7860, share=False, theme=theme, css=css)
