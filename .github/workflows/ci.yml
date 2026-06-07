@@ -77,4 +77,4 @@ jobs:
       env:
         HF_TOKEN: ${{ secrets.HF_TOKEN }}
       run: |
-        git push --force https://Kapish7717:$HF_TOKEN@huggingface.co/spaces/Kapish7717/AI-CFO-Agent main
+        git push --force https://Kaps07:$HF_TOKEN@huggingface.co/spaces/Kaps07/AI-CFO-AGENT main
