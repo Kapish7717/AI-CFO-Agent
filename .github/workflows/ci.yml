@@ -59,22 +59,4 @@ jobs:
         tags: ai-cfo-agent:test
         cache-from: type=gha
         cache-to: type=gha,mode=max
-
-  deploy-to-huggingface:
-    name: Deploying to Hugging Face Spaces
-    runs-on: ubuntu-latest
-    needs: [test, build-docker]
-    if: github.ref == 'refs/heads/main'
-
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
-        lfs: true
-
-    - name: Deploy to Hugging Face
-      env:
-        HF_TOKEN: ${{ secrets.HF_TOKEN }}
-      run: |
-        git push --force https://Kaps07:$HF_TOKEN@huggingface.co/spaces/Kaps07/AI-CFO-AGENT main
+

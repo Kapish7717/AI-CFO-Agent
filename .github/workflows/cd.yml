@@ -1,0 +1,23 @@
+name: CD Pipeline
+
+on:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  deploy:
+    name: Deploying to Hugging Face Spaces
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        lfs: true
+
+    - name: Deploy to Hugging Face
+      env:
+        HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      run: |
+        git push --force https://Kaps07:$HF_TOKEN@huggingface.co/spaces/Kaps07/AI-CFO-AGENT main
