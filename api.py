@@ -656,10 +656,10 @@ def get_dashboard_overview(month: str = None, user_id: int = 1):
                     "percent": round(pct, 1)
                 })
         
-        if len(cat_breakdown) > 5:
-            top_cats = cat_breakdown[:4]
-            other_amt = float(sum(c['amount'] for c in cat_breakdown[4:]))
-            other_pct = float(sum(c['percent'] for c in cat_breakdown[4:]))
+        if len(cat_breakdown) > 10:
+            top_cats = cat_breakdown[:9]
+            other_amt = float(sum(c['amount'] for c in cat_breakdown[9:]))
+            other_pct = float(sum(c['percent'] for c in cat_breakdown[9:]))
             top_cats.append({
                 "category": "Others",
                 "amount": other_amt,

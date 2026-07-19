@@ -313,14 +313,28 @@ function CategoriesDonutChart({ categories, totalAmountStr }) {
     );
   }
 
-  // Predefined harmonious color scheme matching screenshot
+  // Predefined color mapping per dataset category
+  const categoryColorMap = {
+    'Payroll': '#3b82f6',
+    'Operations': '#f43f5e',
+    'Software': '#a855f7',
+    'Marketing': '#f59e0b',
+    'R&D': '#10b981',
+    'Infrastructure': '#06b6d4',
+    'HR': '#ec4899',
+    'Travel': '#f97316',
+    'Legal': '#6366f1',
+    'Others': '#6b7280'
+  };
+
   const sliceColors = [
-    '#3b82f6', // Marketing: Blue
-    '#f43f5e', // Salaries: Rose/Red
-    '#f59e0b', // Operations: Gold/Yellow
-    '#a855f7', // Technology: Purple
-    '#10b981', // Others: Green
+    '#3b82f6', '#f43f5e', '#f59e0b', '#a855f7', '#10b981',
+    '#06b6d4', '#ec4899', '#f97316', '#6366f1', '#6b7280'
   ];
+
+  const getCategoryColor = (catName, idx) => {
+    return categoryColorMap[catName] || sliceColors[idx % sliceColors.length];
+  };
 
   // Circumference of radius 38 is 238.76
   const radius = 38;
@@ -337,7 +351,7 @@ function CategoriesDonutChart({ categories, totalAmountStr }) {
             const offset = (accumulatedPercent / 100) * circ;
             accumulatedPercent += c.percent;
 
-            const strokeColor = sliceColors[i % sliceColors.length];
+            const strokeColor = getCategoryColor(c.category, i);
 
             return (
               <circle
@@ -372,7 +386,7 @@ function CategoriesDonutChart({ categories, totalAmountStr }) {
       {/* Legend list */}
       <div className="category-legend-list">
         {categories.map((c, i) => {
-          const color = sliceColors[i % sliceColors.length];
+          const color = getCategoryColor(c.category, i);
           const isHovered = hoveredIndex === i;
           return (
             <div
