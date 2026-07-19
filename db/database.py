@@ -340,19 +340,48 @@ def create_user(email: str, password_raw: str, full_name: str, role: str = "Fina
 
 # User Settings Helpers
 def get_user_settings(user_id: int):
+    default_settings = {
+        "user_id": user_id,
+        "budget_marketing": 5000.0,
+        "budget_operations": 8000.0,
+        "budget_travel": 2000.0,
+        "expense_file_path": None,
+        "expense_file_name": None,
+        "expense_url": None,
+        "revenue_file_path": None,
+        "revenue_file_name": None,
+        "revenue_url": None,
+        "selected_month": None
+    }
     conn = get_connection()
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT * FROM user_settings WHERE user_id = %s", (user_id,))
             settings = cur.fetchone()
             if not settings:
-                # Fallback if settings don't exist
-                cur.execute("INSERT INTO user_settings (user_id) VALUES (%s) RETURNING *", (user_id,))
-                conn.commit()
+                try:
+                    cur.execute("INSERT INTO user_settings (user_id) VALUES (%s)", (user_id,))
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+                cur.execute("SELECT * FROM user_settings WHERE user_id = %s", (user_id,))
                 settings = cur.fetchone()
-            return settings
+            
+            if settings and isinstance(settings, dict):
+                # Ensure defaults for key values
+                for k, v in default_settings.items():
+                    if k not in settings or settings[k] is None:
+                        settings[k] = v
+                return settings
+            return default_settings
+    except Exception as e:
+        logger.error(f"Error fetching user_settings for user {user_id}: {e}")
+        return default_settings
     finally:
-        conn.close()
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 def update_user_settings(user_id: int, updates: dict):
     conn = get_connection()

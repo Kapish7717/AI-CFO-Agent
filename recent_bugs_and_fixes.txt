@@ -1,0 +1,96 @@
+================================================================================
+                    AI CFO AGENT - RECENT BUGS & FIXES LOG
+================================================================================
+
+1. BUG: Hugging Face Git Push Rejected Due to Binary Files
+   -----------------------------------------------------------------------------
+   - Issue: When pushing to Hugging Face Spaces ('git push hf main'), the push 
+     was rejected by Hugging Face pre-receive hooks due to a 653 KB binary file 
+     ('frontend/public/arjun_profile.png').
+   - Root Cause: Hugging Face Spaces blocks standard git commits containing 
+     binary files larger than 500 KB unless Git LFS/XET is used.
+   - Solution: 
+     1) Replaced the static PNG profile image in 'frontend/src/App.jsx' with a 
+        dynamic UI Avatar API URL (https://ui-avatars.com/api/?name=...).
+     2) Added '*.png' to root '.gitignore' and 'frontend/.gitignore'.
+     3) Reset git history ('git reset HEAD~1') to un-track binary files and 
+        re-committed clean source files.
+
+2. BUG: Untracked Frontend Directory Causing Docker Build Failure
+   -----------------------------------------------------------------------------
+   - Issue: Hugging Face Dockerfile compiles the React frontend via:
+     'WORKDIR /app/frontend' -> 'RUN npm install' -> 'RUN npm run build'.
+     The build would fail because 'frontend/' was untracked in Git.
+   - Root Cause: The 'frontend/' folder lacked git tracking configuration, so 
+     it wasn't pushed to the remote repository.
+   - Solution: Created 'frontend/.gitignore' (excluding 'node_modules/' and 
+     'dist/'), staged all frontend source code (package.json, src/, public/, 
+     vite.config.js), and committed it to Git.
+
+3. BUG: Single Page Application (SPA) 404 Routing Error in FastAPI
+   -----------------------------------------------------------------------------
+   - Issue: Refreshing nested frontend routes or accessing deep paths returned 
+     FastAPI 404 errors instead of loading the React application.
+   - Root Cause: FastAPI was not configured with a fallback handler for React's 
+     client-side router.
+   - Solution: Configured FastAPI to mount '/assets' via StaticFiles and added 
+     a catch-all route '@app.get("/{fallback_path:path}")' that serves 
+     'frontend/dist/index.html' whenever a path is not an API endpoint.
+
+4. BUG: Hugging Face Non-Root Container Permission Errors
+   -----------------------------------------------------------------------------
+   - Issue: PDF generation and temporary log writing crashed on Hugging Face 
+     Spaces with 'PermissionError: [Errno 13] Permission denied'.
+   - Root Cause: Hugging Face Spaces executes Docker containers under user ID 
+     1000 without root write privileges to default directories.
+   - Solution: Updated 'Dockerfile' to set 'ENV HOME=/tmp' and executed 
+     'RUN chmod -R 777 /app && chmod -R 777 /tmp' to ensure writable 
+     permissions for PDF reports, logs, and temp files.
+
+5. BUG: PostgreSQL vs SQLite Dual Database Adapter Incompatibility
+   -----------------------------------------------------------------------------
+   - Issue: Parameterized SQL queries using PostgreSQL '%s' and 'SERIAL' primary 
+     keys failed when falling back to SQLite for local development.
+   - Root Cause: SQLite uses '?' placeholders and 'INTEGER PRIMARY KEY 
+     AUTOINCREMENT' instead of PostgreSQL syntax.
+   - Solution: Built custom 'SQLiteCursorWrapper' and 'SQLiteConnectionWrapper' 
+     classes in 'db/database.py' that automatically convert '%s' -> '?' and 
+     translate PostgreSQL data types dynamically when SQLite is active.
+
+6. BUG: JSON Serialization Crash on Database Decimal Types
+   -----------------------------------------------------------------------------
+   - Issue: FastAPI endpoint '/api/user-settings' and '/api/dashboard-analytics' 
+     threw 'TypeError: Object of type Decimal is not JSON serializable'.
+   - Root Cause: PostgreSQL NUMERIC/DECIMAL column types return Python 'Decimal' 
+     objects via psycopg2, which standard json.dumps cannot serialize.
+   - Solution: Wrapped all numeric database fields with explicit float() casts 
+     (e.g., float(settings["budget_marketing"])) before returning JSON payloads.
+
+7. BUG: Google OAuth 'Error 400: redirect_uri_mismatch' on Hugging Face Spaces
+   -----------------------------------------------------------------------------
+   - Issue: Clicking 'Connect Google Account' on Hugging Face displayed 
+     'Error 400: redirect_uri_mismatch'.
+   - Root Cause: 
+     1) Desktop OAuth client credentials were used initially, which do not support 
+        web redirect URIs.
+     2) Hugging Face reverse proxy requested 'http://' scheme internally instead 
+        of 'https://'.
+   - Solution: 
+     1) Created a Web Application OAuth Client ID in Google Cloud Console and 
+        added 'https://kaps07-ai-cfo-agent.hf.space/auth/callback' to Authorized 
+        redirect URIs and Authorized JavaScript origins.
+     2) Updated 'get_effective_redirect_uri' in 'api.py' to force 'https://' 
+        scheme when hosted on '.hf.space'.
+
+8. BUG: Google OAuth '(invalid_grant) Missing code verifier' PKCE Error
+   -----------------------------------------------------------------------------
+   - Issue: During OAuth authorization code exchange, Google returned 
+     '(invalid_grant) Missing code verifier'.
+   - Root Cause: 'google-auth-oauthlib' auto-generated a transient PKCE 
+     'code_verifier' during URL creation. When code exchange ran across worker 
+     processes or stateless callbacks, the missing verifier caused Google token 
+     exchange to fail.
+   - Solution: Updated 'google_auth.py' and 'api.py' to disable PKCE code verifier 
+     enforcement for Web Application OAuth flows (which use client_secret 
+     verification) and passed the 'state' parameter directly into token exchange.
+================================================================================

@@ -769,9 +769,9 @@ def get_dashboard_overview(month: str = None, user_id: int = 1):
             "date_range_label": date_range_str,
             "last_sync": last_sync,
             # Pass configurations
-            "budget_marketing": float(settings["budget_marketing"]) if settings["budget_marketing"] else 5000.0,
-            "budget_operations": float(settings["budget_operations"]) if settings["budget_operations"] else 8000.0,
-            "budget_travel": float(settings["budget_travel"]) if settings["budget_travel"] else 2000.0
+            "budget_marketing": float(settings.get("budget_marketing")) if settings and settings.get("budget_marketing") is not None else 5000.0,
+            "budget_operations": float(settings.get("budget_operations")) if settings and settings.get("budget_operations") is not None else 8000.0,
+            "budget_travel": float(settings.get("budget_travel")) if settings and settings.get("budget_travel") is not None else 2000.0
         }
     except Exception as e:
         import traceback

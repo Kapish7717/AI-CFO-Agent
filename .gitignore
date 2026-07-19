@@ -9,6 +9,8 @@ dist/
 .env
 credentials.json
 token.json
+client_secret_*.json
+
 
 # Generated State & Output Files
 *.pkl
