@@ -21,3 +21,5 @@ langchain-groq
 mcp
 auth
 langchain-mcp-adapters
+psycopg2-binary
+supabase>=2.0.0

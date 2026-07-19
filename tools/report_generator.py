@@ -22,7 +22,8 @@ class ReportGenerator:
     Generates a comprehensive Business CFO PDF report summarizing financial spending,
     revenue, profit, anomalies, and month-over-month comparisons.
     """
-    def __init__(self, df: pd.DataFrame, output_path: str = "business_cfo_report.pdf", custom_instructions: str = ""):
+    def __init__(self, df: pd.DataFrame, output_path: str = "business_cfo_report.pdf", 
+                 custom_instructions: str = "", budget_breaches: list = None, breaches_file: str = None):
         self.df = df.copy()
         self.output_path = output_path
         self.custom_instructions = custom_instructions
@@ -47,14 +48,15 @@ class ReportGenerator:
             self.anomalies = pd.DataFrame()
 
         # Load Budget Breaches
-        self.budget_breaches = []
-        BREACH_FILE = "budget_breaches.json"
-        if os.path.exists(BREACH_FILE):
-            try:
-                with open(BREACH_FILE, "r") as f:
-                    self.budget_breaches = json.load(f)
-            except Exception:
-                pass
+        self.budget_breaches = budget_breaches if budget_breaches is not None else []
+        if not self.budget_breaches:
+            file_to_load = breaches_file if breaches_file else "budget_breaches.json"
+            if os.path.exists(file_to_load):
+                try:
+                    with open(file_to_load, "r") as f:
+                        self.budget_breaches = json.load(f)
+                except Exception:
+                    pass
 
     def generate_llm_narrative(self) -> dict:
         sys.stderr.write("[REPORT GEN] Starting LLM narrative generation...\n")

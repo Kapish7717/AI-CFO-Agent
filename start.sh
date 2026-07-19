@@ -1,13 +1,6 @@
 #!/bin/bash
 
-# 1. Start the FastAPI backend in the background
-echo "[DEPLOY] Starting FastAPI on port 8000..."
-uvicorn api:app --host 0.0.0.0 --port 8000 &
-
-# 2. Give the backend a second to warm up
-sleep 2
-
-# 3. Start the Gradio frontend in the foreground
-# Hugging Face Spaces will look for activity on port 7860
-echo "[DEPLOY] Starting Gradio on port 7860..."
-python gradio_app.py
+# Start the FastAPI backend directly on port 7860
+# It serves both the API endpoints and the React frontend statically
+echo "[DEPLOY] Starting unified FastAPI server on port 7860..."
+uvicorn api:app --host 0.0.0.0 --port 7860

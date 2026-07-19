@@ -1,0 +1,99 @@
+================================================================================
+                    AI CFO AGENT - POSTGRESQL IMPLEMENTATION GUIDE
+================================================================================
+
+This document details how the multi-user authentication system, PostgreSQL database, 
+user profile configuration, and email/calendar dispatch workflows are implemented 
+and maintained in this project.
+
+--------------------------------------------------------------------------------
+1. DATABASE ARCHITECTURE (POSTGRESQL)
+--------------------------------------------------------------------------------
+All user profiles, chat logs, customized settings (budgets, file paths), and Google 
+OAuth tokens are persisted in PostgreSQL. The system uses a pool of tables to keep
+data isolated between users.
+
+Schemas & Tables:
+
+  A. 'users' Table
+     Stores the primary user credential records.
+     - id (SERIAL PRIMARY KEY): Unique identifier.
+     - email (VARCHAR(255) UNIQUE): Work email address.
+     - password_hash (VARCHAR(255)): Salted SHA-256 hashed password.
+     - full_name (VARCHAR(255)): Displays on headers ("Welcome back, Arjun 👋").
+     - role (VARCHAR(100)): Job designation displayed on sidebar profile widget.
+     - avatar_url (VARCHAR(255)): Profile headshot path (defaults to /arjun_profile.png).
+
+  B. 'user_settings' Table
+     Saves dashboard inputs and budgets per user so they persist on restart.
+     - user_id (INTEGER PRIMARY KEY REFERENCES users(id)): Unique user key.
+     - expense_file_path (VARCHAR(500)), expense_file_name (VARCHAR(255)), expense_url (VARCHAR(1000))
+     - revenue_file_path (VARCHAR(500)), revenue_file_name (VARCHAR(255)), revenue_url (VARCHAR(1000))
+     - budget_marketing (NUMERIC), budget_operations (NUMERIC), budget_travel (NUMERIC)
+     - selected_month (VARCHAR(50))
+
+  C. 'user_google_auth' Table
+     Isolates Google OAuth access/refresh token structures per user.
+     - user_id (INTEGER PRIMARY KEY REFERENCES users(id)): User key.
+     - google_token_json (TEXT): JSON containing OAuth credentials.
+
+  D. 'user_chat_messages' Table
+     Maintains the complete chat log history so it re-renders when a user logs in.
+     - id (SERIAL PRIMARY KEY)
+     - user_id (INTEGER REFERENCES users(id))
+     - sender (VARCHAR(50)): 'agent' or 'user'.
+     - message_text (TEXT)
+     - timestamp (TIMESTAMP)
+
+--------------------------------------------------------------------------------
+2. ENVIRONMENT SETUP
+--------------------------------------------------------------------------------
+Ensure PostgreSQL is running and update your '.env' file in the root directory:
+
+  DATABASE_URL="postgresql://<username>:<password>@<host>:<port>/<dbname>"
+
+If DATABASE_URL is not set, the system falls back to these variables:
+  DB_HOST="localhost"
+  DB_PORT="5432"
+  DB_NAME="cfo_agent"
+  DB_USER="postgres"
+  DB_PASSWORD="postgres"
+
+Seeding Default Account:
+The database helper automatically seeds a default user on initial startup:
+- Email: arjun@cfo.com
+- Password: password123
+
+--------------------------------------------------------------------------------
+3. SESSION & SECURITY MANAGEMENT
+--------------------------------------------------------------------------------
+- Password Hashing: Implemented via PBKDF-like salted hashing using Python's 
+  standard 'hashlib.sha256' library. No extra package downloads are required, 
+  which prevents build errors.
+- Session Persistence: On successful login, the React frontend stores the user 
+  record in localStorage ('cfo_user'). When the web application restarts, React 
+  checks localStorage, restores user state, and immediately fetches matching 
+  settings, histories, and dashboard structures.
+- API requests: Subsequent requests include 'user_id' in headers (X-User-ID) or 
+  as query parameters (e.g., /api/dashboard/overview?user_id=1).
+
+--------------------------------------------------------------------------------
+4. SYSTEM WORKFLOWS & LOGISITICS
+--------------------------------------------------------------------------------
+- Data Separation:
+  Uploads are saved at 'uploads/<user_id>_<filename>' to prevent file overwrites
+  between users. Ingested state-pickles are stored as 'uploads/financial_state_<user_id>.pkl'
+  and reports as 'uploads/executive_cfo_report_<user_id>.pdf'.
+  
+- AI CFO Agent Context:
+  When a prompt is dispatched to '/stream', the FastAPI backend wraps the user's
+  input with the context header: "USER_ID: <id>\n\n<prompt>".
+  The LangGraph model parses this prefix and forwards the user ID to all MCP tool 
+  invocations, isolating Gmail, calendar schedules, and CSV paths.
+
+- Report Dispatching & Meeting Scheduling:
+  In the dashboard's CFO Assistant section, the "Show me revenue trend" button is
+  replaced with a Dispatch form. Submitting this section programmatically sends
+  instructions to the streaming agent to run anomaly detection, build the PDF, 
+  and email it, while optionally scheduling a Calendar meeting in the same turn.
+================================================================================

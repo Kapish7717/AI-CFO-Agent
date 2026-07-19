@@ -16,8 +16,40 @@ SCOPES = [
 TOKEN_PATH = "token.json"
 CREDENTIALS_PATH = "credentials.json"
 
-def is_authenticated():
+def get_db_token(user_id: int):
+    """Loads token from PostgreSQL database."""
+    try:
+        from db.database import get_user_google_token
+        return get_user_google_token(user_id)
+    except Exception as e:
+        sys.stderr.write(f"[AUTH DB ERROR] Failed to fetch token for user {user_id}: {e}\n")
+        return None
+
+def save_db_token(user_id: int, token_json_str: str):
+    """Saves token to PostgreSQL database."""
+    try:
+        from db.database import save_user_google_token
+        save_user_google_token(user_id, token_json_str)
+    except Exception as e:
+        sys.stderr.write(f"[AUTH DB ERROR] Failed to save token for user {user_id}: {e}\n")
+
+def is_authenticated(user_id: int = None):
     """Checks if valid credentials already exist."""
+    # 1. Try DB if user_id is provided
+    if user_id is not None:
+        token_json = get_db_token(user_id)
+        if token_json:
+            try:
+                creds = Credentials.from_authorized_user_info(json.loads(token_json), SCOPES)
+                if creds and creds.valid:
+                    return True
+                if creds and creds.expired and creds.refresh_token:
+                    return True  # Can be refreshed
+            except Exception:
+                pass
+        return False
+
+    # 2. Fallback to local token.json
     if not os.path.exists(TOKEN_PATH):
         return False
     try:
@@ -51,36 +83,48 @@ def get_credentials_dict():
     
     return None
 
-def get_google_credentials():
+def get_google_credentials(user_id: int = None):
     """
     Main entry point for tools.
     Returns credentials if available, otherwise raises Exception with instructions.
     """
     creds = None
     
-    # 1. Try to load existing token
-    if os.path.exists(TOKEN_PATH):
+    # 1. Try to load credentials for user_id from DB
+    if user_id is not None:
+        token_json = get_db_token(user_id)
+        if token_json:
+            try:
+                creds = Credentials.from_authorized_user_info(json.loads(token_json), SCOPES)
+            except Exception as e:
+                sys.stderr.write(f"[AUTH] Error reading DB token for user {user_id}: {e}\n")
+    
+    # 2. Fallback to token.json if no DB token or no user_id
+    if not creds and os.path.exists(TOKEN_PATH):
         try:
             creds = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
         except Exception as e:
-            sys.stderr.write(f"[AUTH] Error reading {TOKEN_PATH}: {e}\n")
+            sys.stderr.write(f"[AUTH] Error reading local {TOKEN_PATH}: {e}\n")
 
-    # 2. Check if token is valid or needs refresh
+    # 3. Check if token is valid or needs refresh
     if creds and creds.valid:
         return creds
         
     if creds and creds.expired and creds.refresh_token:
         try:
-            sys.stderr.write("[AUTH] Refreshing expired Google token...\n")
+            sys.stderr.write(f"[AUTH] Refreshing expired Google token for user {user_id}...\n")
             creds.refresh(Request())
-            # Save refreshed token
-            with open(TOKEN_PATH, "w") as token:
-                token.write(creds.to_json())
+            # Save refreshed token to DB or local file
+            if user_id is not None:
+                save_db_token(user_id, creds.to_json())
+            else:
+                with open(TOKEN_PATH, "w") as token:
+                    token.write(creds.to_json())
             return creds
         except Exception as e:
             sys.stderr.write(f"[AUTH ERROR] Token refresh failed: {e}\n")
 
-    # 3. If no token, we need to authenticate
+    # 4. If no token, we need to authenticate
     creds_dict = get_credentials_dict()
     if not creds_dict:
         raise Exception("MISSING_CREDENTIALS: 'credentials.json' is missing and GOOGLE_CREDENTIALS_JSON secret is not set. You must provide your Google Client Configuration.")
@@ -99,8 +143,11 @@ def get_google_credentials():
         sys.stderr.write("[AUTH] Local environment detected. Opening browser for login...\n")
         flow = InstalledAppFlow.from_client_config(creds_dict, SCOPES)
         creds = flow.run_local_server(port=0, open_browser=True)
-        with open(TOKEN_PATH, "w") as token:
-            token.write(creds.to_json())
+        if user_id is not None:
+            save_db_token(user_id, creds.to_json())
+        else:
+            with open(TOKEN_PATH, "w") as token:
+                token.write(creds.to_json())
         return creds
     except Exception as e:
         sys.stderr.write(f"[AUTH ERROR] Local flow failed: {e}\n")
@@ -109,8 +156,9 @@ def get_google_credentials():
 
 # Global storage for the auth flow to handle PKCE (code_verifier)
 _active_flows = {}
+_oauth_user_ids = {}
 
-def get_auth_url(redirect_uri='http://localhost'):
+def get_auth_url(redirect_uri='http://localhost', user_id: int = 1):
     """Returns a URL the user can visit to authorize the app."""
     creds_dict = get_credentials_dict()
     if not creds_dict:
@@ -126,9 +174,18 @@ def get_auth_url(redirect_uri='http://localhost'):
     
     # Store the flow so we can use its code_verifier later during exchange
     _active_flows[state] = flow
+    _oauth_user_ids[state] = user_id
     return auth_url
 
-def exchange_code_for_token(code, redirect_uri='http://localhost'):
+def get_oauth_user_id(state: str = None):
+    """Resolves the user_id associated with an OAuth state parameter."""
+    if state and state in _oauth_user_ids:
+        return _oauth_user_ids[state]
+    if _oauth_user_ids:
+        return list(_oauth_user_ids.values())[-1]
+    return 1
+
+def exchange_code_for_token(code, redirect_uri='http://localhost', user_id: int = None):
     """Exchanges an authorization code for a token and saves it."""
     creds_dict = get_credentials_dict()
     if not creds_dict:
@@ -152,14 +209,19 @@ def exchange_code_for_token(code, redirect_uri='http://localhost'):
             
         flow.fetch_token(code=code)
         creds = flow.credentials
-        with open(TOKEN_PATH, "w") as token:
-            token.write(creds.to_json())
+        
+        if user_id is not None:
+            save_db_token(user_id, creds.to_json())
+        else:
+            with open(TOKEN_PATH, "w") as token:
+                token.write(creds.to_json())
+                
         return "Success! Token created. You can now use Google tools."
     except Exception as e:
         return f"Error: {e}"
 
-def get_gmail_service():
-    return build("gmail", "v1", credentials=get_google_credentials())
+def get_gmail_service(user_id: int = None):
+    return build("gmail", "v1", credentials=get_google_credentials(user_id=user_id))
 
-def get_calendar_service():
-    return build("calendar", "v3", credentials=get_google_credentials())
+def get_calendar_service(user_id: int = None):
+    return build("calendar", "v3", credentials=get_google_credentials(user_id=user_id))

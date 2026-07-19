@@ -131,33 +131,39 @@ def detect_budget_breaches(df: pd.DataFrame, budget_limits: dict = None) -> pd.D
         return df
 
     # Only look at expenses
-    expenses = df[df['Type'] == 'Expense']
+    expenses = df[df['Type'] == 'Expense'].copy()
     if expenses.empty:
         return df
 
-    # Group by category and calculate totals
-    cat_totals = expenses.groupby('Category')['Amount'].sum().to_dict()
+    # Convert Date to datetime if not already
+    if not pd.api.types.is_datetime64_any_dtype(expenses['Date']):
+        expenses['Date'] = pd.to_datetime(expenses['Date'], dayfirst=True, errors='coerce')
+
+    # Add temporary YearMonth column
+    expenses['YearMonth'] = expenses['Date'].dt.to_period('M')
+
+    # Group by YearMonth and Category
+    grouped = expenses.groupby(['YearMonth', 'Category'])['Amount'].sum().reset_index()
 
     for category, limit in budget_limits.items():
         # Heuristic: category in limits might be 'Marketing' but in data could be 'marketing' or 'Marketing Dept'
         # We'll do a case-insensitive match for simplicity here, or exact if preferred.
-        # Let's try to find the key in cat_totals that matches
-        actual_spend = 0
-        matching_cat = None
-        for c in cat_totals:
-            if str(c).lower() == str(category).lower():
-                actual_spend = cat_totals[c]
-                matching_cat = c
-                break
+        unique_cats = grouped['Category'].unique()
+        matching_cats = [c for c in unique_cats if str(c).lower() == str(category).lower()]
         
-        if matching_cat and actual_spend > limit:
-            # Mark all rows of this category as budget breaches
-            mask = (df['Category'] == matching_cat) & (df['Type'] == 'Expense')
-            df.loc[mask, 'Is_Budget_Breach'] = True
-            df.loc[mask, 'Limit'] = float(limit)
-            df.loc[mask, 'Actual'] = float(actual_spend)
-            df.loc[mask, 'Overspend'] = float(actual_spend - limit)
-            df.loc[mask, 'Percent_Over'] = f"{((actual_spend - limit) / limit * 100):.1f}%"
+        for matching_cat in matching_cats:
+            cat_grouped = grouped[grouped['Category'] == matching_cat]
+            for _, row in cat_grouped.iterrows():
+                ym = row['YearMonth']
+                actual_spend = float(row['Amount'])
+                if actual_spend > limit:
+                    # Mark all rows of this category in this month as budget breaches
+                    mask = (df['Category'] == matching_cat) & (df['Type'] == 'Expense') & (df['Date'].dt.to_period('M') == ym)
+                    df.loc[mask, 'Is_Budget_Breach'] = True
+                    df.loc[mask, 'Limit'] = float(limit)
+                    df.loc[mask, 'Actual'] = float(actual_spend)
+                    df.loc[mask, 'Overspend'] = float(actual_spend - limit)
+                    df.loc[mask, 'Percent_Over'] = f"{((actual_spend - limit) / limit * 100):.1f}%"
 
     return df
 

@@ -106,6 +106,7 @@ def test_detect_rule_based_mom_spikes():
 
 def test_detect_budget_breaches():
     df = pd.DataFrame({
+        "Date": pd.to_datetime(["2026-05-10", "2026-05-12", "2026-05-15", "2026-05-20"]),
         "Category": ["Marketing", "Marketing", "Software", "Travel"],
         "Amount": [600.0, 500.0, 250.0, 100.0],  # Marketing total = 1100, Software = 250
         "Type": ["Expense", "Expense", "Expense", "Expense"]

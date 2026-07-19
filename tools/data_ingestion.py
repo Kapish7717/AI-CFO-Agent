@@ -11,15 +11,16 @@ class DataIngestion:
 
     def load_from_csv(self, file_path: str) -> pd.DataFrame:
         """
-        Loads financial data from a local CSV file.
+        Loads financial data from a local CSV file or HTTP URL.
         
         Args:
-            file_path (str): The path to the CSV file.
+            file_path (str): The path or URL to the CSV file.
             
         Returns:
             pd.DataFrame: A pandas DataFrame containing the loaded data.
         """
-        if not os.path.exists(file_path):
+        is_url = str(file_path).startswith("http")
+        if not is_url and not os.path.exists(file_path):
             raise FileNotFoundError(f"CSV file not found at {file_path}")
         
         try:
@@ -43,15 +44,16 @@ class DataIngestion:
 
     def load_from_excel(self, file_path: str) -> pd.DataFrame:
         """
-        Loads financial data from a local Excel file.
+        Loads financial data from a local Excel file or HTTP URL.
         
         Args:
-            file_path (str): The path to the Excel file.
+            file_path (str): The path or URL to the Excel file.
             
         Returns:
             pd.DataFrame: A pandas DataFrame containing the loaded data.
         """
-        if not os.path.exists(file_path):
+        is_url = str(file_path).startswith("http")
+        if not is_url and not os.path.exists(file_path):
             raise FileNotFoundError(f"Excel file not found at {file_path}")
         
         try:

@@ -1,6 +1,9 @@
 # Environments
 venv/
 env/
+node_modules/
+dist/
+
 
 # Secrets & API Keys (CRITICAL)
 .env
@@ -11,6 +14,12 @@ token.json
 *.pkl
 current_financial_state.pkl
 *.pdf
+*.db
+*.png
+uploads/
+*.log
+
+
 
 # Python Cache
 __pycache__/
