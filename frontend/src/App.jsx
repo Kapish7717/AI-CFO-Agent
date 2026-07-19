@@ -469,9 +469,9 @@ export default function App() {
   // Auth statuses
   const [authStatus, setAuthStatus] = useState('checking');
   const [authUrl, setAuthUrl] = useState('');
-  const [manualCode, setManualCode] = useState('');
   const [authMsg, setAuthMsg] = useState('');
   const [authAccordionOpen, setAuthAccordionOpen] = useState(false);
+  const [showDispatch, setShowDispatch] = useState(false);
 
   const chatEndRef = useRef(null);
 
@@ -1349,43 +1349,68 @@ export default function App() {
 
                 {/* EMAIL DISPATCH AND MEETING SCHEDULER SECTION */}
                 <div className="dispatch-section">
-                  <span className="dispatch-title">
-                    📧 Report Dispatch & Calendar Scheduler
-                  </span>
-                  <div className="dispatch-fields">
-                    <div className="dispatch-field">
-                      <label className="dispatch-label">Recipient Email Address</label>
-                      <input
-                        type="email"
-                        className="dispatch-input"
-                        placeholder="e.g. client@company.com"
-                        value={dispatchEmail}
-                        onChange={(e) => setDispatchEmail(e.target.value)}
-                      />
+                  <button 
+                    type="button"
+                    className="dispatch-toggle-btn"
+                    onClick={() => setShowDispatch(!showDispatch)}
+                    style={{
+                      width: '100%',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justify-content: 'space-between',
+                      background: 'rgba(255, 255, 255, 0.03)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '8px',
+                      padding: '0.4rem 0.65rem',
+                      color: 'var(--text-primary)',
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      marginBottom: showDispatch ? '0.6rem' : '0.4rem'
+                    }}
+                  >
+                    <span>📧 Report Dispatch & Calendar Scheduler</span>
+                    <span>{showDispatch ? '▲' : '▼'}</span>
+                  </button>
+
+                  {showDispatch && (
+                    <div className="dispatch-fields-container">
+                      <div className="dispatch-fields">
+                        <div className="dispatch-field">
+                          <label className="dispatch-label">Recipient Email Address</label>
+                          <input
+                            type="email"
+                            className="dispatch-input"
+                            placeholder="e.g. client@company.com"
+                            value={dispatchEmail}
+                            onChange={(e) => setDispatchEmail(e.target.value)}
+                          />
+                        </div>
+                        <div className="dispatch-field">
+                          <label className="dispatch-label">Schedule Meeting Time (Optional)</label>
+                          <input
+                            type="datetime-local"
+                            className="dispatch-input"
+                            value={meetingTime}
+                            onChange={(e) => setMeetingTime(e.target.value)}
+                          />
+                        </div>
+                      </div>
+                      <div className="dispatch-footer">
+                        <p className="dispatch-help">
+                          Generates PDF report and emails it to the recipient
+                        </p>
+                        <button
+                          type="button"
+                          className="dispatch-submit-btn"
+                          onClick={handleGenerateAndEmailReport}
+                          disabled={isStreaming || !dispatchEmail}
+                        >
+                          🚀 Generate, Email Report & Schedule
+                        </button>
+                      </div>
                     </div>
-                    <div className="dispatch-field">
-                      <label className="dispatch-label">Schedule Meeting Time (Optional)</label>
-                      <input
-                        type="datetime-local"
-                        className="dispatch-input"
-                        value={meetingTime}
-                        onChange={(e) => setMeetingTime(e.target.value)}
-                      />
-                    </div>
-                  </div>
-                  <div className="dispatch-footer">
-                    <p className="dispatch-help">
-                      Generates PDF report and emails it to the recipient
-                    </p>
-                    <button
-                      type="button"
-                      className="dispatch-submit-btn"
-                      onClick={handleGenerateAndEmailReport}
-                      disabled={isStreaming || !dispatchEmail}
-                    >
-                      🚀 Generate, Email Report & Schedule
-                    </button>
-                  </div>
+                  )}
                 </div>
 
                 {/* Quick actions buttons list (Filtered out 'Show me revenue trend') */}
