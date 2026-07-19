@@ -165,11 +165,21 @@ def get_auth_url(redirect_uri='http://localhost', user_id: int = 1):
         return "Error: No credentials found. Set GOOGLE_CREDENTIALS_JSON or upload credentials.json."
     
     from google_auth_oauthlib.flow import Flow
-    flow = Flow.from_client_config(
-        creds_dict, 
-        SCOPES, 
-        redirect_uri=redirect_uri
-    )
+    try:
+        flow = Flow.from_client_config(
+            creds_dict, 
+            SCOPES, 
+            redirect_uri=redirect_uri,
+            autogenerate_code_verifier=False
+        )
+    except TypeError:
+        flow = Flow.from_client_config(
+            creds_dict, 
+            SCOPES, 
+            redirect_uri=redirect_uri
+        )
+        flow.code_verifier = None
+
     auth_url, state = flow.authorization_url(prompt='consent', access_type='offline')
     
     # Store the flow so we can use its code_verifier later during exchange
@@ -185,7 +195,7 @@ def get_oauth_user_id(state: str = None):
         return list(_oauth_user_ids.values())[-1]
     return 1
 
-def exchange_code_for_token(code, redirect_uri='http://localhost', user_id: int = None):
+def exchange_code_for_token(code, redirect_uri='http://localhost', user_id: int = None, state: str = None):
     """Exchanges an authorization code for a token and saves it."""
     creds_dict = get_credentials_dict()
     if not creds_dict:
@@ -194,18 +204,27 @@ def exchange_code_for_token(code, redirect_uri='http://localhost', user_id: int 
     try:
         from google_auth_oauthlib.flow import Flow
         
-        # Try to retrieve the flow that started this request to get the code_verifier
         flow = None
-        if _active_flows:
-            # For simplicity in this single-user app, we take the most recent flow
-            state, flow = list(_active_flows.items())[-1]
+        if state and state in _active_flows:
+            flow = _active_flows.get(state)
+        elif _active_flows:
+            _, flow = list(_active_flows.items())[-1]
         
         if not flow:
-            flow = Flow.from_client_config(
-                creds_dict, 
-                SCOPES, 
-                redirect_uri=redirect_uri
-            )
+            try:
+                flow = Flow.from_client_config(
+                    creds_dict, 
+                    SCOPES, 
+                    redirect_uri=redirect_uri,
+                    autogenerate_code_verifier=False
+                )
+            except TypeError:
+                flow = Flow.from_client_config(
+                    creds_dict, 
+                    SCOPES, 
+                    redirect_uri=redirect_uri
+                )
+                flow.code_verifier = None
             
         flow.fetch_token(code=code)
         creds = flow.credentials

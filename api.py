@@ -281,7 +281,7 @@ async def exchange_google_code(request: AuthExchangeRequest, server_req: Request
 async def auth_callback(request: Request, code: str, state: str = None):
     redirect_uri = get_effective_redirect_uri(request)
     user_id = get_oauth_user_id(state)
-    result = exchange_code_for_token(code, redirect_uri=redirect_uri, user_id=user_id)
+    result = exchange_code_for_token(code, redirect_uri=redirect_uri, user_id=user_id, state=state)
 
     
     if "Success" in result:
