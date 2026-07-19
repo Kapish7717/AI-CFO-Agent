@@ -256,25 +256,33 @@ async def stream_chat(request: ChatRequest):
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 # Integrations / Google OAuth
+def get_effective_redirect_uri(request: Request) -> str:
+    base_url = str(request.base_url).rstrip('/')
+    # Check header or hostname for Hugging Face SSL proxy
+    x_forwarded_proto = request.headers.get("x-forwarded-proto")
+    if x_forwarded_proto == "https" and base_url.startswith("http://"):
+        base_url = base_url.replace("http://", "https://", 1)
+    elif "hf.space" in base_url and base_url.startswith("http://"):
+        base_url = base_url.replace("http://", "https://", 1)
+    return f"{base_url}/auth/callback"
+
 @app.get("/auth/url")
 async def get_google_auth_url(request: Request, user_id: int = 1):
-    base_url = str(request.base_url).rstrip('/')
-    redirect_uri = f"{base_url}/auth/callback"
+    redirect_uri = get_effective_redirect_uri(request)
     return {"url": get_auth_url(redirect_uri=redirect_uri, user_id=user_id)}
 
 @app.post("/auth/exchange")
 async def exchange_google_code(request: AuthExchangeRequest, server_req: Request):
-    base_url = str(server_req.base_url).rstrip('/')
-    redirect_uri = f"{base_url}/auth/callback"
+    redirect_uri = get_effective_redirect_uri(server_req)
     result = exchange_code_for_token(request.code, redirect_uri=redirect_uri, user_id=request.user_id)
     return {"message": result}
 
 @app.get("/auth/callback")
 async def auth_callback(request: Request, code: str, state: str = None):
-    base_url = str(request.base_url).rstrip('/')
-    redirect_uri = f"{base_url}/auth/callback"
+    redirect_uri = get_effective_redirect_uri(request)
     user_id = get_oauth_user_id(state)
     result = exchange_code_for_token(code, redirect_uri=redirect_uri, user_id=user_id)
+
     
     if "Success" in result:
         html_content = """
