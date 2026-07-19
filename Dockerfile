@@ -1,49 +1,43 @@
-# 1. BASE IMAGE
-FROM python:3.12-slim
+# STAGE 1: BUILD REACT FRONTEND USING OFFICIAL NODE IMAGE
+FROM node:20-slim AS frontend-build
+WORKDIR /app/frontend
+COPY frontend/package*.json ./
+RUN npm install --legacy-peer-deps
+COPY frontend/ ./
+RUN npm run build
 
-# 2. INSTALL SYSTEM DEPENDENCIES
-# Necessary for matplotlib, reportlab (PDF generation), Node.js and npm
+# STAGE 2: PYTHON BACKEND & FINAL IMAGE
+FROM python:3.12-slim
+WORKDIR /app
+
+# Install system dependencies for PDF generation (reportlab / matplotlib)
 RUN apt-get update && apt-get install -y \
     libfontconfig1 \
     libfreetype6-dev \
     libjpeg-dev \
     libpng-dev \
     curl \
-    ca-certificates \
-    gnupg \
-    nodejs \
-    npm \
     && rm -rf /var/lib/apt/lists/*
 
-# 3. WORKDIR
-WORKDIR /app
-
-# Ensure Python logs are sent straight to terminal without buffering
 ENV PYTHONUNBUFFERED=1
 
-# 4. INSTALL PYTHON DEPENDENCIES
+# Install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 5. COPY PROJECT FILES
+# Copy all project files
 COPY . .
 
-# 6. BUILD REACT FRONTEND
-WORKDIR /app/frontend
-RUN npm install --legacy-peer-deps
-# Vite build uses public and src assets to output assets to dist
-RUN npm run build
-WORKDIR /app
+# Copy built frontend dist from STAGE 1
+COPY --from=frontend-build /app/frontend/dist /app/frontend/dist
 
-# 7. SET PERMISSIONS FOR HUGGING FACE
-# Hugging Face runs as user 1000. /tmp is always writable.
+# Set permissions for Hugging Face Spaces (user ID 1000)
 ENV HOME=/tmp
 RUN chmod -R 777 /app && chmod -R 777 /tmp
 
-# 8. EXPOSE PORTS
-# 7860 is the port HF Spaces will look for activity on
+# Expose default Hugging Face port
 EXPOSE 7860
 
-# 9. START COMMAND
+# Start command
 RUN chmod +x start.sh
 CMD ["./start.sh"]
