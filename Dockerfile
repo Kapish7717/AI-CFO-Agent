@@ -2,15 +2,17 @@
 FROM python:3.12-slim
 
 # 2. INSTALL SYSTEM DEPENDENCIES
-# Necessary for matplotlib, reportlab (PDF generation), and Node.js
+# Necessary for matplotlib, reportlab (PDF generation), Node.js and npm
 RUN apt-get update && apt-get install -y \
     libfontconfig1 \
     libfreetype6-dev \
     libjpeg-dev \
     libpng-dev \
     curl \
-    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y nodejs \
+    ca-certificates \
+    gnupg \
+    nodejs \
+    npm \
     && rm -rf /var/lib/apt/lists/*
 
 # 3. WORKDIR
@@ -28,7 +30,7 @@ COPY . .
 
 # 6. BUILD REACT FRONTEND
 WORKDIR /app/frontend
-RUN npm install
+RUN npm install --legacy-peer-deps
 # Vite build uses public and src assets to output assets to dist
 RUN npm run build
 WORKDIR /app
