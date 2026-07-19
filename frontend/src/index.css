@@ -511,7 +511,9 @@ body {
 .assistant-panel {
   display: flex;
   flex-direction: column;
-  height: 380px;
+  min-height: 440px;
+  height: auto;
+  overflow: hidden;
 }
 
 .assistant-title {
@@ -529,6 +531,8 @@ body {
 
 .assistant-message-log {
   flex: 1;
+  min-height: 120px;
+  max-height: 220px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
