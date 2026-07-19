@@ -1357,7 +1357,7 @@ export default function App() {
                       width: '100%',
                       display: 'flex',
                       alignItems: 'center',
-                      justify-content: 'space-between',
+                      justifyContent: 'space-between',
                       background: 'rgba(255, 255, 255, 0.03)',
                       border: '1px solid var(--border-color)',
                       borderRadius: '8px',
