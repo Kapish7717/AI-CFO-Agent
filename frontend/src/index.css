@@ -512,8 +512,18 @@ body {
 .assistant-panel {
   display: flex;
   flex-direction: column;
-  height: 380px;
+  height: auto;
+  min-height: 400px;
   overflow: hidden;
+}
+
+.agent-run-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border-color);
+  margin-top: auto;
 }
 
 .assistant-title {
