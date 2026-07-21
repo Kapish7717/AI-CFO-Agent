@@ -108,8 +108,8 @@ function FinancialOverviewChart({ trendData }) {
   }
 
   const width = 600;
-  const height = 220;
-  const padding = { left: 45, right: 15, top: 15, bottom: 30 };
+  const height = 240;
+  const padding = { left: 65, right: 20, top: 20, bottom: 40 };
 
   const activeWidth = width - padding.left - padding.right;
   const activeHeight = height - padding.top - padding.bottom;
@@ -177,10 +177,17 @@ function FinancialOverviewChart({ trendData }) {
   };
 
   const formatShortCurrency = (val) => {
+    if (val === 0) return '$0';
     const sign = val < 0 ? '-' : '';
     const absVal = Math.abs(val);
-    if (absVal >= 1000000) return `${sign}$${(absVal / 1000000).toFixed(1)}M`;
-    if (absVal >= 1000) return `${sign}$${(absVal / 1000).toFixed(0)}K`;
+    if (absVal >= 1000000) {
+      const formatted = (absVal / 1000000).toFixed(1);
+      return `${sign}$${formatted.endsWith('.0') ? formatted.slice(0, -2) : formatted}M`;
+    }
+    if (absVal >= 1000) {
+      const formatted = (absVal / 1000).toFixed(0);
+      return `${sign}$${formatted}K`;
+    }
     return `${sign}$${absVal}`;
   };
 
@@ -188,15 +195,15 @@ function FinancialOverviewChart({ trendData }) {
   const zeroCoords = getCoords(0, 0);
 
   return (
-    <div className="chart-container-inner" style={{ height: '220px' }} onMouseLeave={() => setHoveredIndex(null)}>
+    <div className="chart-container-inner" style={{ height: '240px' }} onMouseLeave={() => setHoveredIndex(null)}>
       <svg className="chart-svg" viewBox={`0 0 ${width} ${height}`}>
         <defs>
           <linearGradient id="revGradient" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="var(--accent-green)" stopOpacity="0.15" />
+            <stop offset="0%" stopColor="var(--accent-green)" stopOpacity="0.18" />
             <stop offset="100%" stopColor="var(--accent-green)" stopOpacity="0.0" />
           </linearGradient>
           <linearGradient id="expGradient" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="var(--accent-red)" stopOpacity="0.12" />
+            <stop offset="0%" stopColor="var(--accent-red)" stopOpacity="0.14" />
             <stop offset="100%" stopColor="var(--accent-red)" stopOpacity="0.0" />
           </linearGradient>
         </defs>
@@ -208,7 +215,7 @@ function FinancialOverviewChart({ trendData }) {
           return (
             <g key={i}>
               <line className="chart-grid-line" x1={padding.left} y1={y} x2={width - padding.right} y2={y} />
-              <text className="chart-label" x={padding.left - 10} y={y + 4} textAnchor="end">
+              <text className="chart-label" x={padding.left - 12} y={y + 4} textAnchor="end">
                 {formatShortCurrency(gridVal)}
               </text>
             </g>
@@ -222,10 +229,9 @@ function FinancialOverviewChart({ trendData }) {
             y1={zeroCoords.y} 
             x2={width - padding.right} 
             y2={zeroCoords.y} 
-            stroke="var(--text-muted)" 
+            stroke="rgba(255, 255, 255, 0.25)" 
             strokeWidth="1.5px" 
-            strokeDasharray="3,3" 
-            opacity={0.6} 
+            strokeDasharray="4,4" 
           />
         )}
 
@@ -233,7 +239,7 @@ function FinancialOverviewChart({ trendData }) {
         {trendData.map((d, i) => {
           const x = padding.left + i * xStep;
           return (
-            <text key={i} className="chart-label" x={x} y={height - padding.bottom + 18} textAnchor="middle">
+            <text key={i} className="chart-label" x={x} y={height - padding.bottom + 22} textAnchor="middle">
               {d.date}
             </text>
           );
@@ -244,14 +250,60 @@ function FinancialOverviewChart({ trendData }) {
         <path d={expAreaPath} fill="url(#expGradient)" />
 
         {/* Line curves */}
-        {pointsCount > 1 && <path className="chart-line-revenue" d={revPath} style={{ strokeWidth: '2.5px' }} />}
-        {pointsCount > 1 && <path className="chart-line" d={expPath} style={{ strokeWidth: '2.5px', stroke: 'var(--accent-red)' }} />}
-        {pointsCount > 1 && <path className="chart-line-net" d={profPath} style={{ stroke: 'var(--text-primary)', strokeWidth: '2px', strokeDasharray: '3,3', opacity: 0.8 }} />}
+        {pointsCount > 1 && (
+          <path 
+            className="chart-line-revenue" 
+            d={revPath} 
+            fill="none" 
+            stroke="var(--accent-green)" 
+            strokeWidth="2.5px" 
+            strokeLinecap="round" 
+            strokeLinejoin="round" 
+          />
+        )}
+        {pointsCount > 1 && (
+          <path 
+            className="chart-line" 
+            d={expPath} 
+            fill="none" 
+            stroke="var(--accent-red)" 
+            strokeWidth="2.5px" 
+            strokeLinecap="round" 
+            strokeLinejoin="round" 
+          />
+        )}
+        {pointsCount > 1 && (
+          <path 
+            className="chart-line-net" 
+            d={profPath} 
+            fill="none" 
+            stroke="#60a5fa" 
+            strokeWidth="2px" 
+            strokeDasharray="4,4" 
+            strokeLinecap="round" 
+            strokeLinejoin="round" 
+            opacity={0.9} 
+          />
+        )}
+
+        {/* Hover detection vertical guide line */}
+        {hoveredIndex !== null && (
+          <line
+            x1={padding.left + hoveredIndex * xStep}
+            y1={padding.top}
+            x2={padding.left + hoveredIndex * xStep}
+            y2={height - padding.bottom}
+            stroke="rgba(255, 255, 255, 0.2)"
+            strokeWidth="1px"
+            strokeDasharray="2,2"
+          />
+        )}
 
         {/* Hover detection nodes */}
         {trendData.map((d, i) => {
           const pExp = getCoords(i, d.expenses || 0);
           const pRev = getCoords(i, d.revenue || 0);
+          const pProf = getCoords(i, d.net_profit || 0);
           return (
             <g key={i}>
               <circle
@@ -264,8 +316,9 @@ function FinancialOverviewChart({ trendData }) {
               />
               {hoveredIndex === i && (
                 <>
-                  <circle cx={pRev.x} cy={pRev.y} r={5} fill="var(--accent-green)" />
-                  <circle cx={pExp.x} cy={pExp.y} r={5} fill="var(--accent-red)" />
+                  <circle cx={pRev.x} cy={pRev.y} r={5} fill="var(--accent-green)" stroke="var(--bg-card)" strokeWidth="1.5px" />
+                  <circle cx={pExp.x} cy={pExp.y} r={5} fill="var(--accent-red)" stroke="var(--bg-card)" strokeWidth="1.5px" />
+                  <circle cx={pProf.x} cy={pProf.y} r={5} fill="#60a5fa" stroke="var(--bg-card)" strokeWidth="1.5px" />
                 </>
               )}
             </g>
@@ -280,19 +333,22 @@ function FinancialOverviewChart({ trendData }) {
           style={{
             left: `${tooltipPos.x}px`,
             top: `${tooltipPos.y}px`,
-            backgroundColor: '#18181b',
-            border: '1px solid var(--border-color)',
-            padding: '0.5rem 0.75rem',
             transform: 'translate(-50%, -110%)'
           }}
         >
-          <div style={{ fontWeight: 700, fontSize: '0.8rem', marginBottom: '3px', color: 'white' }}>
+          <div style={{ fontWeight: 700, fontSize: '0.8rem', marginBottom: '4px', color: 'white' }}>
             {trendData[hoveredIndex].date}
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', fontSize: '0.7rem' }}>
-            <span style={{ color: 'var(--accent-green)' }}>Revenue: {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(trendData[hoveredIndex].revenue)}</span>
-            <span style={{ color: 'var(--accent-red)' }}>Expenses: {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(trendData[hoveredIndex].expenses)}</span>
-            <span style={{ color: 'white' }}>Net Profit: {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(trendData[hoveredIndex].net_profit)}</span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', fontSize: '0.72rem' }}>
+            <span style={{ color: 'var(--accent-green)', fontWeight: 600 }}>
+              Revenue: {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(trendData[hoveredIndex].revenue)}
+            </span>
+            <span style={{ color: 'var(--accent-red)', fontWeight: 600 }}>
+              Expenses: {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(trendData[hoveredIndex].expenses)}
+            </span>
+            <span style={{ color: '#60a5fa', fontWeight: 600 }}>
+              Net Profit: {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(trendData[hoveredIndex].net_profit)}
+            </span>
           </div>
         </div>
       )}
