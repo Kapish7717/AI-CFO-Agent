@@ -1,0 +1,13 @@
+Date,Category,Entity,Amount,Type
+2026-04-10,Software,GitHub,100.0,Expense
+2026-04-15,Software,GitHub,120.0,Expense
+2026-05-10,Software,GitHub,500.0,Expense
+2026-05-15,Software,GitHub,500.0,Expense
+2026-05-20,Marketing,Google Ads,1500.0,Expense
+2026-05-20,Marketing,Google Ads,1500.0,Expense
+2026-05-21,Marketing,Meta Ads,800.0,Expense
+2026-05-22,Travel,Uber,50.0,Expense
+2026-05-23,Software,AWS,10000.0,Expense
+2026-05-05,Sales,Acme Corp,9000.0,Revenue
+2026-05-12,Sales,Acme Corp,8500.0,Revenue
+2026-05-19,Sales,Beta Inc,12000.0,Revenue

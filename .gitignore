@@ -5,6 +5,13 @@ node_modules/
 dist/
 
 
+# Frontend build artifacts (Lovable/TanStack/Cloudflare Wrangler)
+frontend/.output/
+frontend/.wrangler/
+frontend/.tanstack/
+frontend/.lovable/
+
+
 # Secrets & API Keys (CRITICAL)
 .env
 credentials.json
@@ -27,6 +34,16 @@ uploads/
 __pycache__/
 *.py[cod]
 *$py.class
+
+# Local tooling / test artifacts
+.venv/
+.coverage
+.pytest_cache/
+.ruff_cache/
+logs/
+
+# Windows junction mirroring the user's home directory (never commit)
+~
 
 # Private Data (Optional: if you don't want your raw excel files public)
 # *.xlsx

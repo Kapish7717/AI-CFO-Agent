@@ -1,14 +1,31 @@
-# Ignore the virtual environment (it's for Windows, the container uses Linux!)
+# Environments & caches
 venv/
-
-# Ignore Python cache files
+.venv/
+node_modules/
 __pycache__/
 *.pyc
 
-# Ignore previously generated PDFs to save space
+# Frontend build artifacts (stage 1 produces them; never copy the host build)
+frontend/.output/
+frontend/.wrangler/
+frontend/.tanstack/
+frontend/.lovable/
+frontend/node_modules/
+
+# Generated output files
 *.pdf
 *.png
+*.pkl
+*.db
+*.log
+uploads/
 
-# Ignore Git files
+# Git files
 .git/
 .gitignore
+
+# Secrets (must NEVER be baked into the image)
+.env
+credentials.json
+token.json
+client_secret_*.json

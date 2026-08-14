@@ -1,7 +1,7 @@
 # STAGE 1: BUILD REACT FRONTEND USING OFFICIAL NODE IMAGE
 FROM node:20-slim AS frontend-build
 WORKDIR /app/frontend
-COPY frontend/package*.json ./
+COPY frontend/package.json frontend/bun.lock* ./
 RUN npm install --legacy-peer-deps
 COPY frontend/ ./
 RUN npm run build
@@ -29,7 +29,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Copy built frontend dist from STAGE 1
-COPY --from=frontend-build /app/frontend/dist /app/frontend/dist
+COPY --from=frontend-build /app/frontend/dist/client /app/frontend/dist/client
 
 # Set permissions for Hugging Face Spaces (user ID 1000)
 ENV HOME=/tmp

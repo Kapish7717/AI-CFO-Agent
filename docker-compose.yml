@@ -1,0 +1,52 @@
+# Local production-parity stack: PostgreSQL + the FastAPI/React app.
+#
+#   docker compose up --build
+#
+# The API serves the React SPA (built into the image) on http://localhost:7860.
+# For a real deployment, override the `env_file` / environment values.
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: cfo_agent
+      POSTGRES_USER: cfo
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cfo_local_dev}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cfo -d cfo_agent"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql://cfo:${POSTGRES_PASSWORD:-cfo_local_dev}@db:5432/cfo_agent
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?set JWT_SECRET_KEY in your environment}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:7860}
+      LOG_LEVEL: INFO
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      JINA_API_KEY: ${JINA_API_KEY:-}
+      SUPABASE_URL: ${SUPABASE_URL:-}
+      SUPABASE_KEY: ${SUPABASE_KEY:-}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      GOOGLE_CREDENTIALS_JSON: ${GOOGLE_CREDENTIALS_JSON:-}
+      SEED_DEFAULT_USER: ${SEED_DEFAULT_USER:-0}
+    ports:
+      - "7860:7860"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:

@@ -1,0 +1,14 @@
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP", "B"]
+ignore = ["UP007", "B008"]
+
+[tool.coverage.run]
+branch = true
+source = ["app", "tests"]
+
+[tool.coverage.report]
+show_missing = true

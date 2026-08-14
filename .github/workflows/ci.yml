@@ -1,62 +1,49 @@
-name: CI Pipeline
+name: CI
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [main]
   pull_request:
-    branches: [ main, master ]
+
+env:
+  PYTHON_VERSION: "3.11"
 
 jobs:
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install ruff
+        run: pip install -q ruff
+      - name: Lint application + evaluation code
+        run: ruff check app tests scripts
+
   test:
-    name: Run Python Unit Tests
+    name: Unit + golden + trajectory evals
     runs-on: ubuntu-latest
-
     steps:
-    - name: Check out Repository
-      uses: actions/checkout@v4
-
-    - name: Set up Python 3.12
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.12"
-        cache: "pip"
-
-    - name: Install System Dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          libfontconfig1 \
-          libfreetype6-dev \
-          libjpeg-dev \
-          libpng-dev
-
-    - name: Install Python Dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install pytest
-
-    - name: Run Tests with pytest
-      run: |
-        python -m pytest tests/ -v
-
-  build-docker:
-    name: Verify Docker Container Build
-    runs-on: ubuntu-latest
-
-    steps:
-    - name: Check out Repository
-      uses: actions/checkout@v4
-
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
-
-    - name: Build Docker Image (Dry Run)
-      uses: docker/build-push-action@v5
-      with:
-        context: .
-        push: false
-        tags: ai-cfo-agent:test
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
-
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+      - name: Run test suite with coverage
+        env:
+          APP_ENV: development
+          SEED_DEFAULT_USER: "0"
+        run: |
+          coverage run -m pytest tests -q
+          coverage report -m \
+            --include 'app/tools/anomaly_detection.py' --fail-under=80
+          coverage report -m \
+            --include 'tests/evals/agent_trajectory.py' --fail-under=80
+          coverage report -m \
+            --include 'app/core/security.py' --fail-under=80

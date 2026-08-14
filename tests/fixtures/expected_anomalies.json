@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "algorithm": "detect_all_anomalies",
+  "source_file": "anomaly_dataset.csv",
+  "budget_limits_file": "budget_limits.json",
+  "rows": [
+    {"date": "2026-04-10", "entity": "GitHub",    "amount": 100.0,  "severity": "Normal", "is_anomaly": false, "is_duplicate": false, "is_large_amount": false, "is_mom_anomaly": false, "is_budget_breach": false, "is_outlier": false},
+    {"date": "2026-04-15", "entity": "GitHub",    "amount": 120.0,  "severity": "Normal", "is_anomaly": false, "is_duplicate": false, "is_large_amount": false, "is_mom_anomaly": false, "is_budget_breach": false, "is_outlier": false},
+    {"date": "2026-05-10", "entity": "GitHub",    "amount": 500.0,  "severity": "Medium", "is_anomaly": true,  "is_duplicate": false, "is_large_amount": false, "is_mom_anomaly": true,  "is_budget_breach": false, "is_outlier": false},
+    {"date": "2026-05-15", "entity": "GitHub",    "amount": 500.0,  "severity": "Medium", "is_anomaly": true,  "is_duplicate": false, "is_large_amount": false, "is_mom_anomaly": true,  "is_budget_breach": false, "is_outlier": false},
+    {"date": "2026-05-20", "entity": "Google Ads", "amount": 1500.0, "severity": "High",   "is_anomaly": true,  "is_duplicate": true,  "is_large_amount": false, "is_mom_anomaly": false, "is_budget_breach": true,  "is_outlier": false},
+    {"date": "2026-05-20", "entity": "Google Ads", "amount": 1500.0, "severity": "High",   "is_anomaly": true,  "is_duplicate": true,  "is_large_amount": false, "is_mom_anomaly": false, "is_budget_breach": true,  "is_outlier": false},
+    {"date": "2026-05-21", "entity": "Meta Ads",   "amount": 800.0,  "severity": "High",   "is_anomaly": true,  "is_duplicate": false, "is_large_amount": false, "is_mom_anomaly": false, "is_budget_breach": true,  "is_outlier": false},
+    {"date": "2026-05-22", "entity": "Uber",       "amount": 50.0,   "severity": "Normal", "is_anomaly": false, "is_duplicate": false, "is_large_amount": false, "is_mom_anomaly": false, "is_budget_breach": false, "is_outlier": false},
+    {"date": "2026-05-23", "entity": "AWS",        "amount": 10000.0, "severity": "High",  "is_anomaly": true,  "is_duplicate": false, "is_large_amount": true,  "is_mom_anomaly": false, "is_budget_breach": false, "is_outlier": true},
+    {"date": "2026-05-05", "entity": "Acme Corp",  "amount": 9000.0, "severity": "Normal", "is_anomaly": false, "is_duplicate": false, "is_large_amount": false, "is_mom_anomaly": false, "is_budget_breach": false, "is_outlier": false},
+    {"date": "2026-05-12", "entity": "Acme Corp",  "amount": 8500.0, "severity": "Normal", "is_anomaly": false, "is_duplicate": false, "is_large_amount": false, "is_mom_anomaly": false, "is_budget_breach": false, "is_outlier": false},
+    {"date": "2026-05-19", "entity": "Beta Inc",   "amount": 12000.0, "severity": "Normal", "is_anomaly": false, "is_duplicate": false, "is_large_amount": false, "is_mom_anomaly": false, "is_budget_breach": false, "is_outlier": false}
+  ],
+  "aggregate": {
+    "total_rows": 12,
+    "anomaly_count": 6,
+    "severity_counts": {"Normal": 6, "Medium": 2, "High": 4, "Critical": 0}
+  },
+  "budget_breaches": [
+    {"category": "Marketing", "limit": 2000.0, "actual": 3800.0, "overspend": 1800.0, "percent_over": "90.0%"}
+  ]
+}

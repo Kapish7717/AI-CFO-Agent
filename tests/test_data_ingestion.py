@@ -1,8 +1,13 @@
-import os
-import pytest
+from datetime import datetime, timezone
+from unittest.mock import MagicMock, patch
+
 import pandas as pd
-from unittest.mock import patch, MagicMock
-from tools.data_ingestion import DataIngestion
+import pytest
+
+from app.db.database import strip_transaction_record
+from app.db.unified_store import strip_unified_transaction
+from app.tools.data_ingestion import DataIngestion
+
 
 def test_load_from_csv_normal(tmp_path):
     # Create a temporary normal CSV file
@@ -68,7 +73,6 @@ def test_load_from_excel_normal(tmp_path):
 def test_load_from_google_sheets_csv_export(requests_mock=None):
     # Direct CSV export URL should bypass gspread OAuth and load via read_csv
     sheet_url = "https://docs.google.com/spreadsheets/d/12345/export?format=csv"
-    mock_data = "date,category,amount,entity\n23-05-2026,Marketing,1500.0,Google Ads"
 
     # Patch pd.read_csv to return a mock DataFrame when called with the URL
     with patch("pandas.read_csv") as mock_read_csv:
@@ -88,8 +92,166 @@ def test_load_from_google_sheets_csv_export(requests_mock=None):
         assert df.iloc[0]["category"] == "Marketing"
 
 
+def test_strip_transaction_record_normalizes_aliases():
+    raw = {
+        "date": "2026-05-23",
+        "category": "Marketing",
+        "amount": "1500.5",
+        "entity": "Google Ads",
+        "type": "Expense"
+    }
+
+    normalized = strip_transaction_record(raw)
+
+    assert normalized["Date"] == pd.Timestamp("2026-05-23")
+    assert normalized["Category"] == "Marketing"
+    assert normalized["Amount"] == 1500.5
+    assert normalized["Entity"] == "Google Ads"
+    assert normalized["Type"] == "Expense"
+    assert normalized["Severity"] == "Normal"
+    assert normalized["Is_Budget_Breach"] is False
+    assert normalized["Is_Mom_Anomaly"] is False
+    assert normalized["Anomaly_Reason"] is None
+
+
+def test_strip_unified_transaction_normalizes_stripe_payload():
+    raw = {
+        "id": "ch_123",
+        "amount": 1500,
+        "currency": "usd",
+        "created": 1710000000,
+        "status": "succeeded",
+        "billing_details": {"name": "Acme Ltd"}
+    }
+
+    normalized = strip_unified_transaction(raw, source="stripe")
+
+    assert normalized["external_id"] == "ch_123"
+    assert normalized["source"] == "stripe"
+    assert normalized["amount"] == 15.0
+    assert normalized["currency"] == "USD"
+    assert normalized["transaction_date"] == datetime.fromtimestamp(
+        1710000000, tz=timezone.utc
+    ).replace(tzinfo=None)
+    assert normalized["status"] == "succeeded"
+    assert normalized["counterparty"] == "Acme Ltd"
+    assert normalized["transaction_type"] == "revenue"
+    assert normalized["direction"] == "inflow"
+    assert normalized["category"] == "revenue"
+
+
+def test_strip_unified_transaction_categorizes_payout_refund_as_expense():
+    payout = strip_unified_transaction(
+        {
+            "id": "po_xyz",
+            "object": "payout",
+            "amount": 50000,
+            "currency": "usd",
+            "created": 1710000000,
+            "status": "paid",
+        },
+        source="stripe",
+    )
+    assert payout["transaction_type"] == "expense"
+    assert payout["direction"] == "outflow"
+    assert payout["category"] == "expense"
+
+    refund = strip_unified_transaction(
+        {
+            "id": "re_abc",
+            "object": "refund",
+            "amount": 2000,
+            "currency": "usd",
+            "created": 1710000000,
+            "status": "succeeded",
+        },
+        source="stripe",
+    )
+    assert refund["transaction_type"] == "refund"
+    assert refund["direction"] == "outflow"
+    assert refund["status"] == "succeeded"
+
+    failed_charge = strip_unified_transaction(
+        {
+            "id": "ch_fail",
+            "object": "charge",
+            "amount": 100,
+            "currency": "usd",
+            "created": 1710000000,
+            "status": "failed",
+        },
+        source="stripe",
+    )
+    assert failed_charge["transaction_type"] == "expense"
+    assert failed_charge["status"] == "failed"
+    assert failed_charge["direction"] == "outflow"
+
+
+def test_excel_row_maps_to_unified_schema():
+    from app.db.unified_store import _excel_record
+
+    expense = _excel_record(4, {
+        "Date": "2026-05-01",
+        "Type": "Expense",
+        "Category": "Marketing",
+        "Entity": "Ads Inc",
+        "Amount": 500.0,
+    })
+    assert expense["source"] == "excel"
+    assert expense["user_id"] == 4
+    assert expense["transaction_type"] == "expense"
+    assert expense["direction"] == "outflow"
+    assert expense["amount"] == 500.0
+    assert expense["category"] == "Marketing"
+    assert expense["counterparty"] == "Ads Inc"
+
+    revenue = _excel_record(4, {
+        "Date": "2026-05-02",
+        "Type": "Revenue",
+        "Category": "Sales",
+        "Entity": "ClientCo",
+        "Amount": 9000.0,
+    })
+    assert revenue["transaction_type"] == "revenue"
+    assert revenue["direction"] == "inflow"
+
+    # Re-uploading the same row yields the same external_id (idempotent dedup).
+    dup = _excel_record(4, {
+        "Date": "2026-05-01",
+        "Type": "Expense",
+        "Category": "Marketing",
+        "Entity": "Ads Inc",
+        "Amount": 500.0,
+    })
+    assert dup["external_id"] == expense["external_id"]
+
+    # DB-backed rows use lowercase keys; mapping + hash must be identical so the
+    # same transaction never inserts twice across df and DB paths.
+    lower = _excel_record(4, {
+        "date": "2026-05-01",
+        "type": "Expense",
+        "category": "Marketing",
+        "entity": "Ads Inc",
+        "amount": 500.0,
+    })
+    assert lower["transaction_type"] == "expense"
+    assert lower["category"] == "Marketing"
+    assert lower["counterparty"] == "Ads Inc"
+    assert lower["external_id"] == expense["external_id"]
+
+    # A pandas Timestamp date must hash the same as its string form.
+    ts = _excel_record(4, {
+        "Date": pd.Timestamp("2026-05-01"),
+        "Type": "Expense",
+        "Category": "Marketing",
+        "Entity": "Ads Inc",
+        "Amount": 500.0,
+    })
+    assert ts["external_id"] == expense["external_id"]
+
+
 @patch("gspread.authorize")
-@patch("google_auth.get_google_credentials")
+@patch("app.integrations.google_auth.get_google_credentials")
 def test_load_from_google_sheets_gspread(mock_get_creds, mock_gspread_authorize):
     # Normal sheets URL uses gspread
     sheet_url = "https://docs.google.com/spreadsheets/d/12345/edit"

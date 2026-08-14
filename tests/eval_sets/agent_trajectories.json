@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "eval_set_id": "agent_trajectories_v1",
+  "description": "Golden trajectories expected from the CFO ReAct agent for representative user prompts.",
+  "cases": [
+    {
+      "id": "full_report_email",
+      "user_input": "USER_ID: 2. Ingest my uploaded expense file, check for anomalies, generate the CFO PDF report and email it to cfo@acme.com.",
+      "expected_tools": [
+        "authenticate_google",
+        "ingest_financial_data",
+        "detect_financial_anomalies",
+        "generate_cfo_pdf_report",
+        "send_email_report"
+      ],
+      "required_args": {
+        "authenticate_google": {},
+        "ingest_financial_data": {"user_id": 2},
+        "detect_financial_anomalies": {"user_id": 2},
+        "generate_cfo_pdf_report": {"user_id": 2},
+        "send_email_report": {"to_email": "cfo@acme.com", "user_id": 2}
+      }
+    },
+    {
+      "id": "budget_question",
+      "user_input": "USER_ID: 5. How much did we spend on Marketing last month?",
+      "expected_tools": ["query_financial_data"],
+      "required_args": {
+        "query_financial_data": {"category": "Marketing", "user_id": 5}
+      }
+    },
+    {
+      "id": "report_email_meeting",
+      "user_input": "USER_ID: 7. Run the analysis, email the report to board@example.com and schedule a budget review tomorrow morning.",
+      "expected_tools": [
+        "authenticate_google",
+        "ingest_financial_data",
+        "detect_financial_anomalies",
+        "generate_cfo_pdf_report",
+        "send_email_report",
+        "schedule_meeting"
+      ],
+      "required_args": {
+        "send_email_report": {"to_email": "board@example.com", "user_id": 7},
+        "schedule_meeting": {"attendees": null, "user_id": 7}
+      }
+    }
+  ]
+}
