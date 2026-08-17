@@ -28,6 +28,8 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { useAuth } from "@/lib/auth";
+import { AuthAPI } from "@/lib/api";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 
 const nav = [
@@ -70,6 +72,14 @@ export function AppShell({ children }: { children: ReactNode }) {
       .slice(0, 2)
       .join("")
       .toUpperCase();
+
+  const { data: googleStatus, isLoading: googleLoading } = useQuery({
+    queryKey: ["google-status"],
+    queryFn: () => AuthAPI.googleStatus(),
+    refetchOnWindowFocus: true,
+  });
+
+  const googleConnected = !!googleStatus?.authenticated;
 
   return (
     <SidebarProvider>
@@ -149,6 +159,19 @@ export function AppShell({ children }: { children: ReactNode }) {
               </div>
             </div>
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              {!googleLoading && (
+                <Link
+                  to="/integrations"
+                  className={`hidden items-center gap-1.5 rounded-full border px-2.5 py-1 sm:inline-flex ${
+                    googleConnected
+                      ? "border-success/40 bg-success/5 text-success"
+                      : "border-warning/40 bg-warning/5 text-warning"
+                  }`}
+                >
+                  <span className={`h-1.5 w-1.5 rounded-full ${googleConnected ? "bg-success" : "bg-warning"}`} />
+                  {googleConnected ? "Google linked" : "Google not linked"}
+                </Link>
+              )}
               <span className="hidden sm:inline">{user?.email}</span>
               <Button variant="ghost" size="sm" onClick={logout} className="h-8 gap-1.5">
                 <LogOut className="h-3.5 w-3.5" /> Sign out

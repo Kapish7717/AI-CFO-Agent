@@ -21,6 +21,7 @@ import { Label } from "@/components/ui/label";
 import { PageHeader } from "@/components/page-header";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { AgentAPI, DashboardAPI, SettingsAPI } from "@/lib/api";
+import { GoogleAuthBar } from "@/components/google-auth-bar";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/")({
@@ -74,6 +75,8 @@ function Dashboard() {
       />
 
       <div className="px-6 py-6 md:px-10 space-y-8">
+        <GoogleAuthBar />
+
         {isLoading && (
           <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading dashboard…</div>
         )}
