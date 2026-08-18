@@ -104,6 +104,12 @@ async def ingest_financial_data(expense_path_or_url: str, revenue_path_or_url: s
 
     temp_exp_path = f"uploads/temp_ingest_expense_{user_id}{_remote_suffix(expense_path_or_url) if expense_path_or_url else '.csv'}"
     temp_rev_path = f"uploads/temp_ingest_revenue_{user_id}{_remote_suffix(revenue_path_or_url) if revenue_path_or_url else '.csv'}"
+
+    # Keep the ORIGINAL paths/URLs the user configured. Downloading to a temp
+    # file must NOT clobber the persisted settings (it used to store the temp
+    # path, which is deleted afterwards — breaking every later agent run).
+    orig_expense = expense_path_or_url
+    orig_revenue = revenue_path_or_url
     
     try:
         # If the paths are Supabase URLs, download them authenticated to temp local files
@@ -254,16 +260,19 @@ async def ingest_financial_data(expense_path_or_url: str, revenue_path_or_url: s
                 sys.stderr.write(f"[DB ERROR] Unified excel mirror failed: {ue}\n")
             
             # Update user settings with these file paths so they display on restart!
+            # Use the ORIGINAL configured paths (not the temp download copies).
             try:
                 from app.db.database import update_user_settings
                 if user_id is not None:
+                    orig_exp_is_url = bool(orig_expense) and orig_expense.startswith("http")
+                    orig_rev_is_url = bool(orig_revenue) and orig_revenue.startswith("http")
                     update_user_settings(user_id, {
-                        "expense_file_path": expense_path_or_url if not is_url else None,
-                        "expense_file_name": os.path.basename(expense_path_or_url) if not is_url else None,
-                        "expense_url": expense_path_or_url if is_url else None,
-                        "revenue_file_path": revenue_path_or_url if (revenue_path_or_url and not revenue_path_or_url.startswith("http")) else None,
-                        "revenue_file_name": os.path.basename(revenue_path_or_url) if (revenue_path_or_url and not revenue_path_or_url.startswith("http")) else None,
-                        "revenue_url": revenue_path_or_url if (revenue_path_or_url and revenue_path_or_url.startswith("http")) else None
+                        "expense_file_path": orig_expense if (orig_expense and not orig_exp_is_url) else None,
+                        "expense_file_name": os.path.basename(orig_expense) if (orig_expense and not orig_exp_is_url) else None,
+                        "expense_url": orig_expense if orig_exp_is_url else None,
+                        "revenue_file_path": orig_revenue if (orig_revenue and not orig_rev_is_url) else None,
+                        "revenue_file_name": os.path.basename(orig_revenue) if (orig_revenue and not orig_rev_is_url) else None,
+                        "revenue_url": orig_revenue if orig_rev_is_url else None
                     })
             except Exception as se:
                 sys.stderr.write(f"[DB Warning] Settings update skipped: {se}\n")
