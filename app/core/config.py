@@ -44,7 +44,12 @@ class Settings(BaseSettings):
 
     # --- CORS ---------------------------------------------------------------
     # Comma-separated list of allowed origins, e.g. "https://app.example.com"
-    CORS_ORIGINS: str = "http://localhost:5173,http://localhost:7860"
+    CORS_ORIGINS: str = (
+        "http://localhost:5173,http://127.0.0.1:5173,"
+        "http://localhost:8080,http://127.0.0.1:8080,"
+        "http://localhost:8000,http://127.0.0.1:8000,"
+        "http://localhost:7860,http://127.0.0.1:7860"
+    )
 
     # --- Integrations --------------------------------------------------------
     GROQ_API_KEY: str = ""

@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
-import { AuthAPI, getStoredUser, setStoredUser, type StoredUser } from "./api";
+import { AuthAPI, getStoredToken, getStoredUser, setStoredToken, setStoredUser, type StoredUser } from "./api";
 
 interface AuthContextValue {
   user: StoredUser | null;
@@ -12,10 +12,16 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<StoredUser | null>(() => getStoredUser());
+  const [user, setUser] = useState<StoredUser | null>(() => {
+    const stored = getStoredUser();
+    return stored && getStoredToken() ? stored : null;
+  });
 
   useEffect(() => {
-    const handler = () => setUser(getStoredUser());
+    const handler = () => {
+      const stored = getStoredUser();
+      setUser(stored && getStoredToken() ? stored : null);
+    };
     window.addEventListener("aicfo:user-changed", handler);
     window.addEventListener("storage", handler);
     return () => {
@@ -26,6 +32,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(async (email: string, password: string) => {
     const res = await AuthAPI.login({ email, password });
+    setStoredToken(res.token);
     setStoredUser(res.user);
     setUser(res.user);
   }, []);
@@ -33,6 +40,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const register = useCallback(
     async (payload: { email: string; password: string; full_name: string; role?: string }) => {
       const res = await AuthAPI.register(payload);
+      setStoredToken(res.token);
       // Backend register returns user_id only; fetch full profile.
       const me = await AuthAPI.me(res.user_id);
       setStoredUser(me);
@@ -42,6 +50,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const logout = useCallback(() => {
+    setStoredToken(null);
     setStoredUser(null);
     setUser(null);
   }, []);

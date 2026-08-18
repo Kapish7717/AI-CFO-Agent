@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { CheckCircle2, KeyRound, Loader2, X } from "lucide-react";
 import { AuthAPI } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
 
 const DISMISS_KEY = "aicfo.google-auth-dismissed";
 
@@ -43,8 +44,15 @@ export function GoogleAuthBar() {
   const connect = useMutation({
     mutationFn: () => AuthAPI.googleAuthUrl(),
     onSuccess: (res) => {
+      if (!res.url || res.url.startsWith("Error") || !res.url.startsWith("http")) {
+        toast.error(res.url || "Could not start Google authentication. Check backend credentials.");
+        return;
+      }
       const popup = window.open(res.url, "google-oauth", "width=520,height=680");
-      if (!popup) return;
+      if (!popup) {
+        toast.error("Popup blocked. Please allow popups for this site.");
+        return;
+      }
       popupRef.current = popup;
       if (pollRef.current) window.clearInterval(pollRef.current);
       pollRef.current = window.setInterval(() => {
@@ -55,6 +63,7 @@ export function GoogleAuthBar() {
         }
       }, 750);
     },
+    onError: (e: Error) => toast.error(e.message || "Failed to start Google authentication"),
   });
 
   const disconnect = useMutation({

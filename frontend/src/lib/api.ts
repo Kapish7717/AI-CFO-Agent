@@ -18,6 +18,7 @@ export interface StoredUser {
 }
 
 const USER_KEY = "aicfo.user";
+const TOKEN_KEY = "aicfo.token";
 
 export function getStoredUser(): StoredUser | null {
   if (typeof window === "undefined") return null;
@@ -34,6 +35,28 @@ export function setStoredUser(user: StoredUser | null) {
   if (!user) window.localStorage.removeItem(USER_KEY);
   else window.localStorage.setItem(USER_KEY, JSON.stringify(user));
   window.dispatchEvent(new CustomEvent("aicfo:user-changed"));
+}
+
+export function getStoredToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return window.localStorage.getItem(TOKEN_KEY);
+}
+
+export function setStoredToken(token: string | null) {
+  if (typeof window === "undefined") return;
+  if (!token) window.localStorage.removeItem(TOKEN_KEY);
+  else window.localStorage.setItem(TOKEN_KEY, token);
+}
+
+function authHeaders(init?: RequestInit): RequestInit {
+  const token = getStoredToken();
+  const headers = new Headers(init?.headers);
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  return { ...init, headers };
+}
+
+async function authedFetch(path: string, init?: RequestInit): Promise<Response> {
+  return fetch(path, authHeaders(init));
 }
 
 export function currentUserId(): number {
@@ -74,29 +97,29 @@ function safeJson(text: string): any {
 // ---------- Auth ----------
 export const AuthAPI = {
   register: (payload: { email: string; password: string; full_name: string; role?: string }) =>
-    fetch(url("/api/auth/register"), {
+    authedFetch(url("/api/auth/register"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
-    }).then((r) => handle<{ success: boolean; user_id: number }>(r)),
+    }).then((r) => handle<{ success: boolean; user_id: number; token: string }>(r)),
 
   login: (payload: { email: string; password: string }) =>
-    fetch(url("/api/auth/login"), {
+    authedFetch(url("/api/auth/login"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
-    }).then((r) => handle<{ success: boolean; user: StoredUser }>(r)),
+    }).then((r) => handle<{ success: boolean; token: string; user: StoredUser }>(r)),
 
-  me: (userId?: number) => fetch(withUserId("/api/auth/me", userId)).then((r) => handle<StoredUser>(r)),
+  me: (userId?: number) => authedFetch(withUserId("/api/auth/me", userId)).then((r) => handle<StoredUser>(r)),
 
   googleAuthUrl: (userId?: number) =>
-    fetch(withUserId("/auth/url", userId)).then((r) => handle<{ url: string }>(r)),
+    authedFetch(withUserId("/auth/url", userId)).then((r) => handle<{ url: string }>(r)),
 
   googleStatus: (userId?: number) =>
-    fetch(withUserId("/auth/status", userId)).then((r) => handle<{ authenticated: boolean }>(r)),
+    authedFetch(withUserId("/auth/status", userId)).then((r) => handle<{ authenticated: boolean }>(r)),
 
   googleDisconnect: (userId?: number) =>
-    fetch(withUserId("/api/auth/google/disconnect", userId), { method: "POST" }).then((r) =>
+    authedFetch(withUserId("/api/auth/google/disconnect", userId), { method: "POST" }).then((r) =>
       handle<{ success: boolean }>(r),
     ),
 };
@@ -124,9 +147,9 @@ export interface UserSettings {
 }
 
 export const SettingsAPI = {
-  get: (userId?: number) => fetch(withUserId("/api/user-settings", userId)).then((r) => handle<UserSettings>(r)),
+  get: (userId?: number) => authedFetch(withUserId("/api/user-settings", userId)).then((r) => handle<UserSettings>(r)),
   update: (updates: Partial<UserSettings>, userId?: number) =>
-    fetch(withUserId("/api/user-settings", userId), {
+    authedFetch(withUserId("/api/user-settings", userId), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(updates),
@@ -142,11 +165,11 @@ export interface ModelList {
 }
 
 export const ProvidersAPI = {
-  list: () => fetch(url("/api/providers")).then((r) => handle<ProviderList>(r)),
+  list: () => authedFetch(url("/api/providers")).then((r) => handle<ProviderList>(r)),
   models: (provider: string, apiKey?: string) => {
     const q = new URLSearchParams({ provider });
     if (apiKey) q.set("api_key", apiKey);
-    return fetch(url(`/api/models?${q.toString()}`)).then((r) => handle<ModelList>(r));
+    return authedFetch(url(`/api/models?${q.toString()}`)).then((r) => handle<ModelList>(r));
   },
 };
 
@@ -198,7 +221,7 @@ export interface DashboardOverview {
 export const DashboardAPI = {
   overview: (month?: string, userId?: number) => {
     const q = month ? `/api/dashboard/overview?month=${encodeURIComponent(month)}` : "/api/dashboard/overview";
-    return fetch(withUserId(q, userId)).then((r) => handle<DashboardOverview>(r));
+    return authedFetch(withUserId(q, userId)).then((r) => handle<DashboardOverview>(r));
   },
   downloadReportUrl: (userId?: number) => withUserId("/api/download-report", userId),
 };
@@ -211,7 +234,7 @@ export interface ChatMessage {
 }
 
 export const ChatAPI = {
-  history: (userId?: number) => fetch(withUserId("/api/chat/history", userId)).then((r) => handle<ChatMessage[]>(r)),
+  history: (userId?: number) => authedFetch(withUserId("/api/chat/history", userId)).then((r) => handle<ChatMessage[]>(r)),
 };
 
 // ---------- Uploads ----------
@@ -220,7 +243,7 @@ export const UploadAPI = {
     const uid = userId ?? currentUserId();
     const form = new FormData();
     form.append("file", file);
-    const res = await fetch(
+    const res = await authedFetch(
       `${API_BASE_URL}/api/upload?user_id=${encodeURIComponent(uid)}&file_type=${fileType}`,
       { method: "POST", body: form },
     );
@@ -247,17 +270,17 @@ export interface StripeConnectResult {
 
 export const StripeAPI = {
   connect: (apiKey: string, userId?: number) =>
-    fetch(withUserId("/api/integrations/stripe/connect", userId), {
+    authedFetch(withUserId("/api/integrations/stripe/connect", userId), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ api_key: apiKey }),
     }).then((r) => handle<StripeConnectResult>(r)),
 
   status: (userId?: number) =>
-    fetch(withUserId("/api/integrations/stripe/status", userId)).then((r) => handle<StripeStatus>(r)),
+    authedFetch(withUserId("/api/integrations/stripe/status", userId)).then((r) => handle<StripeStatus>(r)),
 
   disconnect: (userId?: number) =>
-    fetch(withUserId("/api/integrations/stripe/disconnect", userId), {
+    authedFetch(withUserId("/api/integrations/stripe/disconnect", userId), {
       method: "POST",
     }).then((r) => handle<{ success: boolean; connected: boolean }>(r)),
 };
@@ -282,14 +305,14 @@ export interface DataQueryResult {
 
 export const AgentAPI = {
   run: (toEmail?: string | null, userId?: number) =>
-    fetch(withUserId("/api/agent/run", userId), {
+    authedFetch(withUserId("/api/agent/run", userId), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ user_id: userId ?? currentUserId(), to_email: toEmail || null }),
     }).then((r) => handle<AgentRunResult>(r)),
 
   dataQuery: (question: string, userId?: number) =>
-    fetch(withUserId("/api/chat/data-query", userId), {
+    authedFetch(withUserId("/api/chat/data-query", userId), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ user_id: userId ?? currentUserId(), question }),
