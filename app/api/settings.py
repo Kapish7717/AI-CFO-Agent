@@ -11,24 +11,24 @@ logger = logging.getLogger("cfo.api.settings")
 router = APIRouter()
 
 class UserSettingsUpdate(BaseModel):
-    budget_marketing: float = None
-    budget_operations: float = None
-    budget_travel: float = None
-    expense_file_path: str = None
-    expense_file_name: str = None
-    expense_url: str = None
-    revenue_file_path: str = None
-    revenue_file_name: str = None
-    revenue_url: str = None
-    selected_month: str = None
-    llm_primary_provider: str = None
-    llm_primary_model: str = None
-    llm_fallback_provider: str = None
-    llm_fallback_model: str = None
-    api_key: str = None
-    fallback_api_key: str = None
-    report_email: str = None
-    report_schedule: str = None
+    budget_marketing: float | None = None
+    budget_operations: float | None = None
+    budget_travel: float | None = None
+    expense_file_path: str | None = None
+    expense_file_name: str | None = None
+    expense_url: str | None = None
+    revenue_file_path: str | None = None
+    revenue_file_name: str | None = None
+    revenue_url: str | None = None
+    selected_month: str | None = None
+    llm_primary_provider: str | None = None
+    llm_primary_model: str | None = None
+    llm_fallback_provider: str | None = None
+    llm_fallback_model: str | None = None
+    api_key: str | None = None
+    fallback_api_key: str | None = None
+    report_email: str | None = None
+    report_schedule: str | None = None
 
 @router.get("/api/user-settings")
 def get_settings(user_id: int = Depends(get_current_user_id)):

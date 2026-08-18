@@ -94,15 +94,22 @@ async def ingest_financial_data(expense_path_or_url: str, revenue_path_or_url: s
     ingestor = DataIngestion()
     sys.stderr.write(f"[MCP] Tool 'ingest_financial_data' started (User: {user_id}). Expense: {expense_path_or_url}\n")
     
-    temp_exp_path = f"uploads/temp_ingest_expense_{user_id}.csv"
-    temp_rev_path = f"uploads/temp_ingest_revenue_{user_id}.csv"
+    import urllib.parse
+    def _remote_suffix(remote_url: str, default: str = ".csv") -> str:
+        """Derive the original file extension from a storage URL so the downloaded
+        temp file keeps the same type (Excel/PDF/CSV) it was uploaded as."""
+        rel = urllib.parse.unquote(remote_url.split("cfo-agent-files/")[-1])
+        ext = os.path.splitext(rel)[1].lower()
+        return ext if ext in (".csv", ".xlsx", ".xls", ".pdf") else default
+
+    temp_exp_path = f"uploads/temp_ingest_expense_{user_id}{_remote_suffix(expense_path_or_url) if expense_path_or_url else '.csv'}"
+    temp_rev_path = f"uploads/temp_ingest_revenue_{user_id}{_remote_suffix(revenue_path_or_url) if revenue_path_or_url else '.csv'}"
     
     try:
         # If the paths are Supabase URLs, download them authenticated to temp local files
         if expense_path_or_url and "supabase.co/storage/v1/object/public/cfo-agent-files/" in expense_path_or_url:
             from app.db.storage import download_from_storage
             rel_path = expense_path_or_url.split("cfo-agent-files/")[-1]
-            import urllib.parse
             rel_path = urllib.parse.unquote(rel_path)
             if download_from_storage(rel_path, temp_exp_path):
                 expense_path_or_url = temp_exp_path
@@ -110,7 +117,6 @@ async def ingest_financial_data(expense_path_or_url: str, revenue_path_or_url: s
         if revenue_path_or_url and "supabase.co/storage/v1/object/public/cfo-agent-files/" in revenue_path_or_url:
             from app.db.storage import download_from_storage
             rel_path = revenue_path_or_url.split("cfo-agent-files/")[-1]
-            import urllib.parse
             rel_path = urllib.parse.unquote(rel_path)
             if download_from_storage(rel_path, temp_rev_path):
                 revenue_path_or_url = temp_rev_path
