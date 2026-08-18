@@ -38,7 +38,12 @@ def get_conn():
 
 
 def _map_payment_method(payment_method, obj_type):
-    pm = (payment_method or "").lower()
+    if payment_method is None:
+        pm = ""
+    elif isinstance(payment_method, str):
+        pm = payment_method.strip().lower()
+    else:
+        pm = str(payment_method).strip().lower()
     if pm in ("card", "card_present", "contactless"):
         return "card"
     if pm in ("bank_transfer", "ach", "sepa_debit", "bank_account", "transfers", "payout"):

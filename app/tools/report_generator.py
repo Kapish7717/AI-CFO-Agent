@@ -49,6 +49,10 @@ class ReportGenerator:
         if 'Type' not in self.df.columns:
             self.df['Type'] = 'Expense'
 
+        # Restrict every chart/table/narrative in the report to the trailing 12
+        # calendar months, anchored on the latest month present in the data.
+        self.df = self._trailing_months(self.df, 12)
+
         self.expenses = self.df[self.df['Type'] == 'Expense'].copy()
         self.revenue = self.df[self.df['Type'] == 'Revenue'].copy()
 
@@ -67,6 +71,20 @@ class ReportGenerator:
                         self.budget_breaches = json.load(f)
                 except Exception:
                     pass
+
+    def _trailing_months(self, frame, n):
+        """Return a copy of ``frame`` keeping only the last ``n`` calendar months,
+        anchored on the latest month present in the data."""
+        if frame is None or frame.empty or 'Date' not in frame.columns:
+            return frame.copy() if frame is not None else frame
+        df = frame.copy()
+        df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+        df = df.dropna(subset=['Date'])
+        if df.empty:
+            return df
+        latest = df['Date'].dt.to_period('M').max()
+        cutoff = (latest - (n - 1)).start_time
+        return df[df['Date'] >= cutoff]
 
     def generate_llm_narrative(self) -> dict:
         sys.stderr.write("[REPORT GEN] Starting LLM narrative generation...\n")

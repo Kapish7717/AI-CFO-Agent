@@ -130,7 +130,7 @@ def list_models(provider: str, api_key: str | None = None) -> list[str]:
     if p == "openai":
         return ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "o1", "o1-mini", "gpt-3.5-turbo"]
     if p == "groq":
-        return ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "llama-3.1-70b-versatile", "mixtral-8x7b-32768", "llama2-70b-4096"]
+        return ["llama-3.3-70b-versatile", "llama-3.1-70b-versatile", "mixtral-8x7b-32768"]
     if p in {"gemini", "google", "google_genai"}:
         return ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"]
     if p in {"anthropic", "claude"}:
