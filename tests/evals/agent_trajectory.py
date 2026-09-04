@@ -207,16 +207,23 @@ class ScriptedPolicy(Policy):
 
 
 class DeviantPolicy(Policy):
-    """Skips the mandatory detection step to model a broken agent."""
+    """Skips the mandatory detection step to model a broken agent.
+
+    Walks the golden sequence but omits ``detect_financial_anomalies``, so the
+    executed trajectory is genuine yet deviant.
+    """
+
+    def __init__(self):
+        self._queue = [
+            "authenticate_google",
+            "ingest_financial_data",
+            "generate_cfo_pdf_report",  # detect_financial_anomalies SKIPPED
+        ]
 
     def decide(self, history: Sequence[str]) -> TrajectoryStep | None:
-        if not history:
-            return TrajectoryStep("authenticate_google", {})
-        if history[-1] == "authenticate_google":
-            return TrajectoryStep("ingest_financial_data", {})
-        if history[-1] == "ingest_financial_data":
-            return TrajectoryStep("generate_cfo_pdf_report", {})  # SKIPPED detect
-        return None
+        if not self._queue:
+            return None
+        return TrajectoryStep(self._queue.pop(0), {})
 
 
 # --------------------------------------------------------------------------- #
@@ -229,7 +236,6 @@ STUB_RESULTS = {
     "generate_cfo_pdf_report": "Success! PDF generated.",
     "send_email_report": "Success! Email sent.",
     "schedule_meeting": "Success! Meeting scheduled.",
-    "query_financial_data": "Found 3 matching transactions.",
 }
 
 

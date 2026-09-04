@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "eval_set_id": "report_content_v1",
+  "description": "Golden expected report content (KPIs, anomaly rows, monthly revenue) hand-computed from the fixture dataset. Used by the report-content evaluation harness.",
+  "dataset": {
+    "columns": ["Date", "Type", "Category", "Entity", "Amount"],
+    "rows": [
+      ["2026-01-05", "Expense", "Marketing", "Acme Ads", 1000],
+      ["2026-01-10", "Expense", "Payroll", "Payroll LLC", 5000],
+      ["2026-01-15", "Revenue", "Sales", "Client A", 8000],
+      ["2026-02-05", "Expense", "Marketing", "Acme Ads", 900],
+      ["2026-02-12", "Revenue", "Sales", "Client A", 8500],
+      ["2026-02-20", "Expense", "Marketing", "Big Spike LLC", 12000],
+      ["2026-03-02", "Revenue", "Sales", "Client B", 9000],
+      ["2026-03-08", "Expense", "Payroll", "Payroll LLC", 5100],
+      ["2026-03-15", "Expense", "Marketing", "Acme Ads", 950]
+    ]
+  },
+  "cases": [
+    {
+      "id": "standard_report",
+      "description": "One high-severity anomaly (Big Spike LLC, IQR + rule-based) among otherwise healthy three-month data.",
+      "expected_kpis": {
+        "Gross Revenue": 25500.0,
+        "Total Expenses": 24950.0,
+        "Net Profit": 550.0,
+        "Avg Burn Rate": 8316.67
+      },
+      "expected_anomalies": [
+        {
+          "date": "2026-02-20",
+          "type": "Expense",
+          "entity": "Big Spike LLC",
+          "amount": 12000.0,
+          "severity": "High"
+        }
+      ],
+      "expected_total_anomalies": 1,
+      "expected_monthly_revenue": [
+        {"month": "Jan 2026", "total": 8000.0},
+        {"month": "Feb 2026", "total": 8500.0},
+        {"month": "Mar 2026", "total": 9000.0}
+      ],
+      "narrative_ground_truth": {
+        "revenue": 25500.0,
+        "expenses": 24950.0,
+        "profit": 550.0
+      }
+    }
+  ]
+}

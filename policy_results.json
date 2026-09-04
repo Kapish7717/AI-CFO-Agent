@@ -1,0 +1,57 @@
+{
+    "executed_tools": [
+        "authenticate_google",
+        "ingest_financial_data",
+        "detect_financial_anomalies",
+        "generate_cfo_pdf_report",
+        "send_email_report"
+    ],
+    "expected_tools": [
+        "authenticate_google",
+        "ingest_financial_data",
+        "detect_financial_anomalies",
+        "generate_cfo_pdf_report",
+        "send_email_report"
+    ],
+    "tool_set_precision": 1.0,
+    "tool_set_recall": 1.0,
+    "order_score": 1.0,
+    "arg_faithfulness": 1.0,
+    "missing_tools": [],
+    "extra_tools": [],
+    "arg_violations": [],
+    "score": 1.0,
+    "passed": true
+}
+{
+    "executed_tools": [
+        "authenticate_google",
+        "ingest_financial_data",
+        "generate_cfo_pdf_report"
+    ],
+    "expected_tools": [
+        "authenticate_google",
+        "ingest_financial_data",
+        "detect_financial_anomalies",
+        "generate_cfo_pdf_report",
+        "send_email_report"
+    ],
+    "tool_set_precision": 1.0,
+    "tool_set_recall": 0.6,
+    "order_score": 0.6,
+    "arg_faithfulness": 0.0,
+    "missing_tools": [
+        "detect_financial_anomalies",
+        "send_email_report"
+    ],
+    "extra_tools": [],
+    "arg_violations": [
+        "ingest_financial_data.user_id: expected 2, got [None]",
+        "detect_financial_anomalies.user_id: expected 2, got []",
+        "generate_cfo_pdf_report.user_id: expected 2, got [None]",
+        "send_email_report.to_email: expected 'cfo@acme.com', got []",
+        "send_email_report.user_id: expected 2, got []"
+    ],
+    "score": 0.52,
+    "passed": false
+}

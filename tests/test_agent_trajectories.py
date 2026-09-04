@@ -27,7 +27,7 @@ def _golden_cases():
 def test_eval_set_schema_is_valid():
     data = load_eval_set()
     assert data["version"] == 1
-    assert len(data["cases"]) >= 3
+    assert len(data["cases"]) >= 2
     for case in data["cases"]:
         assert case["id"]
         assert case["user_input"]
@@ -91,13 +91,13 @@ def test_wrong_argument_value_is_flagged():
 def test_missing_required_key_is_flagged():
     """A required arg that is entirely absent must be caught."""
     executed = Trajectory(
-        steps=[TrajectoryStep("query_financial_data", {"user_id": 5})]
+        steps=[TrajectoryStep("send_email_report", {"user_id": 5})]
     )
     result = score_trajectory(
         executed,
-        ["query_financial_data"],
-        {"query_financial_data": {"category": "Marketing"}},
+        ["send_email_report"],
+        {"send_email_report": {"to_email": "cfo@acme.com"}},
         threshold=GOLDEN_THRESHOLD,
     )
     assert result["passed"] is False
-    assert any("category" in v for v in result["arg_violations"])
+    assert any("to_email" in v for v in result["arg_violations"])

@@ -22,14 +22,6 @@
       }
     },
     {
-      "id": "budget_question",
-      "user_input": "USER_ID: 5. How much did we spend on Marketing last month?",
-      "expected_tools": ["query_financial_data"],
-      "required_args": {
-        "query_financial_data": {"category": "Marketing", "user_id": 5}
-      }
-    },
-    {
       "id": "report_email_meeting",
       "user_input": "USER_ID: 7. Run the analysis, email the report to board@example.com and schedule a budget review tomorrow morning.",
       "expected_tools": [

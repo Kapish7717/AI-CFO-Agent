@@ -166,7 +166,9 @@ def create_llm(provider: str, model: str | None = None, api_key: str | None = No
 	if provider == "groq":
 		if ChatGroq is None:
 			raise RuntimeError("ChatGroq is not available; install langchain-groq")
-		init = {"model": model} if model else {}
+		# Default to a model the Groq API currently serves so NULL model
+		# settings do not hard-fail with model_not_found.
+		init = {"model": model or "openai/gpt-oss-120b"}
 		if api_key:
 			init["groq_api_key"] = api_key
 		init.update(kwargs)
