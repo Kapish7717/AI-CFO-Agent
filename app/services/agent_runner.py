@@ -23,12 +23,14 @@ async def ingest_user_data(user_id: int) -> dict[str, Any]:
 
     Called after an upload so the dashboard reflects the new data immediately.
     """
+    import asyncio
+
     from app.agents.mcp_server import ingest_financial_data
     from app.services.budget_breaches import refresh_budget_breaches
 
     try:
         from app.db.database import get_user_settings
-        settings = get_user_settings(user_id)
+        settings = await asyncio.to_thread(get_user_settings, user_id)
     except Exception as e:
         return {"success": False, "message": f"Failed to load settings: {e}"}
 
@@ -92,6 +94,8 @@ async def run_cfo_pipeline(user_id: int, to_email: str | None = None) -> dict[st
 
     ``to_email`` overrides the stored ``report_email`` when provided.
     """
+    import asyncio
+
     from app.agents.mcp_server import (
         detect_financial_anomalies,
         generate_cfo_pdf_report,
@@ -100,7 +104,7 @@ async def run_cfo_pipeline(user_id: int, to_email: str | None = None) -> dict[st
     )
     from app.db.database import get_user_settings
 
-    settings = get_user_settings(user_id)
+    settings = await asyncio.to_thread(get_user_settings, user_id)
     expense = settings.get("expense_url") or settings.get("expense_file_path")
     revenue = settings.get("revenue_url") or settings.get("revenue_file_path")
 
@@ -241,14 +245,16 @@ async def run_data_query(user_id: int, question: str) -> str:
     The stored data is summarized into a digest which is passed to the user's
     configured LLM (primary provider/model from settings) for a grounded answer.
     """
+    import asyncio
+
     from app.db.database import get_user_settings
     from app.services.llm_factory import create_llm, generate_text
 
-    digest = build_data_digest(user_id)
+    digest = await asyncio.to_thread(build_data_digest, user_id)
     if digest.startswith("No transaction data found"):
         return digest
 
-    settings = get_user_settings(user_id)
+    settings = await asyncio.to_thread(get_user_settings, user_id)
     provider = settings.get("llm_primary_provider") or "mock"
     model = settings.get("llm_primary_model")
 

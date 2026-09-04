@@ -46,14 +46,15 @@ async def chat_data_query(req: DataQueryRequest, user_id: int = Depends(get_curr
     """Answer a question about the user's uploaded financial data via Jina RAG.
     Querying the database is fully separate from the CFO reporting agent.
     """
+    import asyncio
     if not req.question or not req.question.strip():
         return {"answer": "Please type a question about your financial data.", "success": True}
     from app.services.rag import answer_with_rag
     answer = await answer_with_rag(user_id=user_id, question=req.question.strip())
     # Persist the Q&A to chat history so it survives a page refresh.
     try:
-        save_user_chat_message(user_id, "user", req.question.strip())
-        save_user_chat_message(user_id, "agent", answer)
+        await asyncio.to_thread(save_user_chat_message, user_id, "user", req.question.strip())
+        await asyncio.to_thread(save_user_chat_message, user_id, "agent", answer)
     except Exception as e:
         logger.warning("Could not persist chat for user %s: %s", user_id, e)
     return {"answer": answer, "success": True}

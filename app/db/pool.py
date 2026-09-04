@@ -21,7 +21,7 @@ from psycopg2 import pool as _pg_pool
 logger = logging.getLogger("db.pool")
 
 DB_POOL_MIN = int(os.environ.get("DB_POOL_MIN", "1"))
-DB_POOL_MAX = int(os.environ.get("DB_POOL_MAX", "10"))
+DB_POOL_MAX = int(os.environ.get("DB_POOL_MAX", "20"))
 DB_CONNECT_TIMEOUT = int(os.environ.get("DB_CONNECT_TIMEOUT", "10"))
 
 _pools: dict[str, _pg_pool.ThreadedConnectionPool] = {}

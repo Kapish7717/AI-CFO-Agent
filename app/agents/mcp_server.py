@@ -308,7 +308,7 @@ async def detect_financial_anomalies(budget_limits: dict = None, user_id: int = 
     if budget_limits is None:
         try:
             from app.db.database import get_user_settings
-            settings = get_user_settings(user_id)
+            settings = await asyncio.to_thread(get_user_settings, user_id)
             from app.services.budget_breaches import CATEGORY_MAP
             budget_limits = {}
             for field, category in CATEGORY_MAP.items():
@@ -398,7 +398,7 @@ async def generate_cfo_pdf_report(custom_instructions: str = "", user_id: int = 
         return f"Failed: {e}"
 
 @mcp.tool()
-def send_email_report(to_email: str, subject: str, body: str, user_id: int = None) -> str:
+async def send_email_report(to_email: str, subject: str, body: str, user_id: int = None) -> str:
     """
     Sends a CFO report email via Gmail. 
     to_email: The recipient email address.
@@ -458,7 +458,7 @@ def send_email_report(to_email: str, subject: str, body: str, user_id: int = Non
 
         sys.stderr.write(f"\n[EMAIL TRIGGERED]: Sending email via Gmail to {to_email} | Subject: {subject}\n")
         try:
-            send_message = service.users().messages().send(userId="me", body=create_message).execute()
+            send_message = await asyncio.to_thread(service.users().messages().send(userId="me", body=create_message).execute)
             sys.stderr.write(f"[MCP] Tool 'send_email_report' completed successfully. Gmail response: {send_message}\n")
             message_id = send_message.get("id")
             return f"Success! Real email sent to {to_email}. Gmail Message ID: {message_id}"
@@ -471,7 +471,7 @@ def send_email_report(to_email: str, subject: str, body: str, user_id: int = Non
         return f"Failed to send email: {e}"
 
 @mcp.tool()
-def schedule_meeting(attendees: str, start_time: str, end_time: str, user_id: int = None) -> str:
+async def schedule_meeting(attendees: str, start_time: str, end_time: str, user_id: int = None) -> str:
     """
     Schedules a budget review meeting on Google Calendar.
     attendees: comma-separated list of email addresses.
@@ -507,88 +507,13 @@ def schedule_meeting(attendees: str, start_time: str, end_time: str, user_id: in
 
         sys.stderr.write(f"\n[CALENDAR TRIGGERED]: Scheduling meeting '{summary}' on {start_time} with {attendees}\n")
         
-        event = service.events().insert(calendarId='primary', body=event, sendUpdates='all').execute()
+        event = await asyncio.to_thread(service.events().insert(calendarId='primary', body=event, sendUpdates='all').execute)
         return f"Success! Meeting scheduled. Event Link: {event.get('htmlLink')}"
         
     except Exception as e:
         sys.stderr.write(f"\n[CALENDAR ERROR]: {e}\n")
         return f"Failed to schedule meeting: {e}"
 
-@mcp.tool()
-async def query_financial_data(
-    search_query: str = None,
-    category: str = None,
-    entity: str = None,
-    transaction_type: str = None,
-    start_date: str = None,
-    end_date: str = None,
-    limit: int = 50,
-    user_id: int = None
-) -> str:
-    """
-    Queries the user's ingested financial transactions database.
-    Use this tool when the user asks specific questions about transactions, balances, spending, categories, merchants, or dates.
-    search_query: a case-insensitive search term matching Category or Entity.
-    category: filter by Category name.
-    entity: filter by Entity name.
-    transaction_type: 'Expense' or 'Revenue'.
-    start_date: YYYY-MM-DD filter start.
-    end_date: YYYY-MM-DD filter end.
-    limit: max rows to return (default 50).
-    """
-    from app.db.database import get_user_transactions
-    rows = await asyncio.to_thread(get_user_transactions, user_id)
-    if not rows:
-        return "No transaction data found. The user needs to ingest financial data first."
-
-    df = pd.DataFrame(rows)
-    
-    # Apply filters
-    if transaction_type:
-        df = df[df['Type'].str.lower() == transaction_type.lower()]
-        
-    if category:
-        df = df[df['Category'].str.contains(category, case=False, na=False)]
-        
-    if entity:
-        df = df[df['Entity'].str.contains(entity, case=False, na=False)]
-        
-    if search_query:
-        mask = (
-            df['Category'].str.contains(search_query, case=False, na=False) |
-            df['Entity'].str.contains(search_query, case=False, na=False) |
-            df['Anomaly_Reason'].str.contains(search_query, case=False, na=False)
-        )
-        df = df[mask]
-        
-    if start_date:
-        try:
-            df = df[df['Date'] >= pd.to_datetime(start_date)]
-        except Exception:
-            pass
-            
-    if end_date:
-        try:
-            df = df[df['Date'] <= pd.to_datetime(end_date)]
-        except Exception:
-            pass
-
-    total_count = len(df)
-    df = df.sort_values('Date', ascending=False).head(limit)
-    
-    if df.empty:
-        return "No transactions matched the criteria."
-
-    # Format output
-    output = [f"Found {total_count} matching transactions (showing top {len(df)}):"]
-    for _, r in df.iterrows():
-        date_str = r['Date'].strftime('%Y-%m-%d') if pd.notnull(r['Date']) else 'N/A'
-        anomaly_flag = f" [ANOMALY: {r['Severity']}]" if r['Severity'] != 'Normal' else ""
-        output.append(
-            f"- {date_str} | {r['Type']} | {r['Category']} | {r['Entity']} | ${r['Amount']:,.2f}{anomaly_flag}"
-        )
-        
-    return "\n".join(output)
 
 if __name__ == "__main__":
     mcp.run()
