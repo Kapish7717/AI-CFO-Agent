@@ -329,7 +329,7 @@ def get_sync_status(source: str):
         conn.close()
 
 
-def write_to_unified_store(records, user_id: int = 1):
+def write_to_unified_store(records, user_id: int):
     if not records:
         return 0
 
@@ -425,7 +425,7 @@ def write_to_unified_store(records, user_id: int = 1):
     return inserted
 
 
-def store_stripe_transactions(records, user_id: int = 1) -> int:
+def store_stripe_transactions(records, user_id: int) -> int:
     """Persist raw Stripe object payloads into the dedicated `stripe_transactions`
     table (Supabase), kept separate from the normalized `unified_transactions`
     view of the same data.

@@ -174,16 +174,22 @@ def stripe_connect(payload: StripeConnectRequest, user_id: int = Depends(get_cur
     if not api_key:
         raise HTTPException(status_code=400, detail="Stripe API key is required")
 
-    # Validate the key before persisting it.
+    # Validate the key and retrieve the Stripe account ID before persisting.
     try:
         import stripe
         stripe.api_key = api_key
         stripe.Charge.list(limit=1)
+        # Retrieve the account ID so webhooks can resolve the owning user.
+        account = stripe.Account.retrieve("me")
+        stripe_account_id = account.get("id")
     except Exception as e:
         logger.warning("Stripe key rejected for user %s: %s", user_id, e)
         raise HTTPException(status_code=400, detail="Stripe key rejected. Please check the key and try again.") from e
 
-    update_user_settings(user_id, {"stripe_secret_key": api_key})
+    update_user_settings(user_id, {
+        "stripe_secret_key": api_key,
+        "stripe_account_id": stripe_account_id,
+    })
 
     from app.services.stripe_sync import sync_stripe_charges
     result = sync_stripe_charges(user_id, api_key)
@@ -230,7 +236,7 @@ def stripe_status(user_id: int = Depends(get_current_user_id)):
 
 @router.post("/api/integrations/stripe/disconnect")
 def stripe_disconnect(user_id: int = Depends(get_current_user_id)):
-    update_user_settings(user_id, {"stripe_secret_key": None})
+    update_user_settings(user_id, {"stripe_secret_key": None, "stripe_account_id": None})
     try:
         update_sync_status(source="stripe", status="disconnected", record_count=None)
     except Exception as e:

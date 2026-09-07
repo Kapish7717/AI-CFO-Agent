@@ -273,9 +273,31 @@ from db.unified_store import strip_unified_transaction, write_to_unified_store, 
 STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY")
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET")
 
-def map_stripe_charge(charge: dict) -> dict:
+
+def _resolve_users_from_stripe_account(stripe_account_id: str) -> list[int]:
+    """Look up all users who have the given Stripe account ID connected."""
+    if not stripe_account_id:
+        return []
+    try:
+        from db.database import get_connection
+        conn = get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT user_id FROM user_settings WHERE stripe_account_id = %s",
+                    (stripe_account_id,),
+                )
+                return [row["user_id"] for row in cur.fetchall()]
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.warning(f"Failed to resolve users for Stripe account {stripe_account_id}: {e}")
+        return []
+
+
+def map_stripe_charge(charge: dict, user_id: int | None = None) -> dict:
     """Normalizes a Stripe charge object into the unified transaction schema."""
-    return strip_unified_transaction(charge, source="stripe")
+    return strip_unified_transaction(charge, source="stripe", user_id=user_id)
 
 # Stripe events that represent a transaction and should be persisted.
 # Incoming payments (charges/payment intents) record as revenue when they
@@ -330,14 +352,26 @@ if STRIPE_SECRET_KEY:
                 event = json.loads(payload)
 
             if event["type"] in PAYMENT_EVENTS:
-                record = map_stripe_charge(event["data"]["object"])
-                inserted = write_to_unified_store([record])
-                update_sync_status(
-                    source="stripe",
-                    status="healthy",
-                    record_count=inserted,
-                    last_synced_at=datetime.now(),
-                )
+                # Resolve all users who have this Stripe account connected.
+                stripe_account_id = event.get("account")
+                user_ids = _resolve_users_from_stripe_account(stripe_account_id)
+                if not user_ids:
+                    logger.warning(
+                        f"Stripe webhook received for unknown account {stripe_account_id}; skipping. "
+                        "Background sync will pick up this transaction."
+                    )
+                    return {"status": "skipped", "reason": "unknown_account"}
+
+                # Attribute the transaction to all users who share this Stripe account.
+                for uid in user_ids:
+                    record = map_stripe_charge(event["data"]["object"], user_id=uid)
+                    inserted = write_to_unified_store([record], user_id=uid)
+                    update_sync_status(
+                        source="stripe",
+                        status="healthy",
+                        record_count=inserted,
+                        last_synced_at=datetime.now(),
+                    )
 
             return {"status": "received"}
     else:

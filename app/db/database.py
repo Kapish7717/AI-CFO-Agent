@@ -269,6 +269,7 @@ def init_db():
                 api_key VARCHAR(1000) NULL,
                 fallback_api_key VARCHAR(1000) NULL,
                 stripe_secret_key VARCHAR(255) NULL,
+                stripe_account_id VARCHAR(255) NULL,
                 report_email VARCHAR(255) NULL,
                 report_schedule VARCHAR(50) NULL
             );
@@ -283,6 +284,7 @@ def init_db():
             ("api_key", "VARCHAR(1000)"),
             ("fallback_api_key", "VARCHAR(1000)"),
             ("stripe_secret_key", "VARCHAR(255)"),
+            ("stripe_account_id", "VARCHAR(255)"),
             ("report_email", "VARCHAR(255)"),
             ("report_schedule", "VARCHAR(50)"),
         ):
