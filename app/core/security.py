@@ -27,7 +27,7 @@ logger = logging.getLogger("cfo.security")
 
 PBKDF2_ITERATIONS = 600_000
 PBKDF2_PREFIX = "pbkdf2_sha256"
-JWT_CLAIMS = ("sub", "email", "role", "full_name")
+JWT_CLAIMS = ("sub", "email", "role", "full_name", "company_domain", "is_active")
 
 _bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -68,7 +68,7 @@ def verify_password(password: str, stored_hash: str) -> bool:
 # --------------------------------------------------------------------------- #
 # JWT
 # --------------------------------------------------------------------------- #
-def create_access_token(user_id: int, email: str, role: str, full_name: str = "") -> str:
+def create_access_token(user_id: int, email: str, role: str, full_name: str = "", company_domain: str = None, is_active: bool = True) -> str:
     settings = get_settings()
     now = datetime.now(timezone.utc)
     payload = {
@@ -76,6 +76,8 @@ def create_access_token(user_id: int, email: str, role: str, full_name: str = ""
         "email": email,
         "role": role,
         "full_name": full_name,
+        "company_domain": company_domain,
+        "is_active": is_active,
         "iat": now,
         "exp": now + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
     }
@@ -123,4 +125,37 @@ def get_current_user(
 
 def get_current_user_id(current: dict = Depends(get_current_user)) -> int:
     """Shorthand dependency that resolves the authenticated user id."""
+    return int(current["sub"])
+
+
+# --------------------------------------------------------------------------- #
+# Role-based access control dependencies
+# --------------------------------------------------------------------------- #
+def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
+    """Only admin users can access this endpoint."""
+    if current_user.get("role") != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )
+    return current_user
+
+
+def require_active_user(current_user: dict = Depends(get_current_user)) -> dict:
+    """Any active user can access this endpoint."""
+    if current_user.get("is_active") is False:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account has been deactivated. Contact your admin.",
+        )
+    return current_user
+
+
+def get_admin_user_id(current: dict = Depends(require_admin)) -> int:
+    """Shorthand dependency that resolves the authenticated admin user id."""
+    return int(current["sub"])
+
+
+def get_active_user_id(current: dict = Depends(require_active_user)) -> int:
+    """Shorthand dependency that resolves the authenticated active user id."""
     return int(current["sub"])
