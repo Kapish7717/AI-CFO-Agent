@@ -242,11 +242,34 @@ def init_db():
                 email VARCHAR(255) UNIQUE NOT NULL,
                 password_hash VARCHAR(255) NOT NULL,
                 full_name VARCHAR(255) DEFAULT 'User',
-                role VARCHAR(100) DEFAULT 'Finance Head',
+                role VARCHAR(50) DEFAULT 'user',
+                company_domain VARCHAR(255) NULL,
+                is_active BOOLEAN DEFAULT TRUE,
                 avatar_url VARCHAR(255) DEFAULT '/arjun_profile.png',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
+
+        # Migrate users table: add new columns if they don't exist yet.
+        cur.execute("SAVEPOINT migrate_users")
+        for _col, _dtype in (
+            ("company_domain", "VARCHAR(255)"),
+            ("is_active", "BOOLEAN DEFAULT TRUE"),
+        ):
+            try:
+                cur.execute(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS {_col} {_dtype};")
+            except Exception:
+                cur.execute("ROLLBACK TO SAVEPOINT migrate_users")
+                cur.execute("SAVEPOINT migrate_users")
+        cur.execute("RELEASE SAVEPOINT migrate_users")
+
+        # Migrate existing 'Finance Head' roles to 'admin' for backward compatibility.
+        cur.execute("SAVEPOINT migrate_roles")
+        try:
+            cur.execute("UPDATE users SET role = 'admin' WHERE role = 'Finance Head'")
+        except Exception:
+            cur.execute("ROLLBACK TO SAVEPOINT migrate_roles")
+        cur.execute("RELEASE SAVEPOINT migrate_roles")
 
         # 2. Create User Settings table
         cur.execute("""
@@ -276,6 +299,7 @@ def init_db():
         """)
 
         # Migrate existing tables: add LLM config columns if they don't exist yet.
+        cur.execute("SAVEPOINT migrate_settings_cols")
         for _col, _dtype in (
             ("llm_primary_provider", "VARCHAR(50)"),
             ("llm_primary_model", "VARCHAR(255)"),
@@ -291,7 +315,9 @@ def init_db():
             try:
                 cur.execute(f"ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS {_col} {_dtype} NULL;")
             except Exception:
-                pass
+                cur.execute("ROLLBACK TO SAVEPOINT migrate_settings_cols")
+                cur.execute("SAVEPOINT migrate_settings_cols")
+        cur.execute("RELEASE SAVEPOINT migrate_settings_cols")
 
         # 3. Create User Google Auth table
         cur.execute("""
@@ -317,6 +343,7 @@ def init_db():
             CREATE TABLE IF NOT EXISTS transactions (
                 id SERIAL PRIMARY KEY,
                 user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                company_domain VARCHAR(255) NULL,
                 date TIMESTAMP NOT NULL,
                 category VARCHAR(100),
                 amount NUMERIC(15, 2) NOT NULL,
@@ -329,10 +356,26 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
+        cur.execute("SAVEPOINT migrate_tx_indexes")
         try:
             cur.execute("CREATE INDEX IF NOT EXISTS idx_transactions_user_date ON transactions(user_id, date);")
         except Exception:
-            pass
+            cur.execute("ROLLBACK TO SAVEPOINT migrate_tx_indexes")
+            cur.execute("SAVEPOINT migrate_tx_indexes")
+        try:
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_transactions_domain ON transactions(company_domain);")
+        except Exception:
+            cur.execute("ROLLBACK TO SAVEPOINT migrate_tx_indexes")
+            cur.execute("SAVEPOINT migrate_tx_indexes")
+        cur.execute("RELEASE SAVEPOINT migrate_tx_indexes")
+
+        # Migrate transactions table: add company_domain column if it doesn't exist.
+        cur.execute("SAVEPOINT migrate_tx_domain")
+        try:
+            cur.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS company_domain VARCHAR(255) NULL;")
+        except Exception:
+            cur.execute("ROLLBACK TO SAVEPOINT migrate_tx_domain")
+        cur.execute("RELEASE SAVEPOINT migrate_tx_domain")
 
         # 6. Create Unified Transactions table (all external + excel sources,
         # normalized into one canonical row shape for every source).
@@ -413,10 +456,12 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
+        cur.execute("SAVEPOINT migrate_stripe_idx")
         try:
             cur.execute("CREATE INDEX IF NOT EXISTS idx_stripe_tx_user_date ON stripe_transactions(user_id, transaction_date);")
         except Exception:
-            pass
+            cur.execute("ROLLBACK TO SAVEPOINT migrate_stripe_idx")
+        cur.execute("RELEASE SAVEPOINT migrate_stripe_idx")
 
         # 7. Create Sync Status table
         cur.execute("""
@@ -426,6 +471,15 @@ def init_db():
                 last_synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 record_count INTEGER DEFAULT 0,
                 error_message TEXT
+            );
+        """)
+
+        # 8. Create Company Settings table
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS company_settings (
+                domain VARCHAR(255) PRIMARY KEY,
+                company_name VARCHAR(255) NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
 
@@ -502,16 +556,16 @@ def get_all_user_ids() -> list[int]:
     finally:
         conn.close()
 
-def create_user(email: str, password_raw: str, full_name: str, role: str = "Finance Head"):
+def create_user(email: str, password_raw: str, full_name: str, role: str = "user", company_domain: str = None):
     conn = get_connection()
     try:
         logger.info(f"Creating user in database: email={email.strip().lower()}, role={role}")
         hashed = hash_password(password_raw)
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO users (email, password_hash, full_name, role)
-                VALUES (%s, %s, %s, %s) RETURNING id
-            """, (email.strip().lower(), hashed, full_name, role))
+                INSERT INTO users (email, password_hash, full_name, role, company_domain)
+                VALUES (%s, %s, %s, %s, %s) RETURNING id
+            """, (email.strip().lower(), hashed, full_name, role, company_domain))
             user_id = cur.fetchone()['id']
             
             # Create default settings
@@ -525,6 +579,90 @@ def create_user(email: str, password_raw: str, full_name: str, role: str = "Fina
         logger.error(f"Error in create_user for email {email}: {e}", exc_info=True)
         conn.rollback()
         raise e
+    finally:
+        conn.close()
+
+
+def extract_company_domain(email: str) -> str:
+    """Extract company domain from email address."""
+    return email.split('@')[1].strip().lower()
+
+
+def is_first_user_of_domain(domain: str) -> bool:
+    """Check if this is the first user with this email domain."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) as cnt FROM users WHERE company_domain = %s", (domain,))
+            result = cur.fetchone()
+            return result['cnt'] == 0 if result else True
+    finally:
+        conn.close()
+
+
+def get_users_by_domain(domain: str) -> list[dict]:
+    """Get all users in the same company (same email domain)."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, email, full_name, role, is_active, created_at FROM users WHERE company_domain = %s ORDER BY created_at",
+                (domain,)
+            )
+            return cur.fetchall()
+    finally:
+        conn.close()
+
+
+def update_user_role(user_id: int, role: str) -> bool:
+    """Update a user's role (admin or user)."""
+    if role not in ('admin', 'user'):
+        return False
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE users SET role = %s WHERE id = %s", (role, user_id))
+            conn.commit()
+            return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def set_user_active(user_id: int, is_active: bool) -> bool:
+    """Activate or deactivate a user."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE users SET is_active = %s WHERE id = %s", (is_active, user_id))
+            conn.commit()
+            return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def get_company_settings(domain: str) -> dict:
+    """Get company settings by domain."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM company_settings WHERE domain = %s", (domain,))
+            return cur.fetchone()
+    finally:
+        conn.close()
+
+
+def update_company_settings(domain: str, company_name: str = None) -> bool:
+    """Create or update company settings."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO company_settings (domain, company_name)
+                VALUES (%s, %s)
+                ON CONFLICT (domain) DO UPDATE SET company_name = COALESCE(%s, company_settings.company_name)
+            """, (domain, company_name, company_name))
+            conn.commit()
+            return True
     finally:
         conn.close()
 
@@ -702,7 +840,7 @@ def delete_user_transactions(user_id: int):
     finally:
         conn.close()
 
-def upsert_user_transactions(user_id: int, rows: list[dict]) -> dict:
+def upsert_user_transactions(user_id: int, rows: list[dict], company_domain: str = None) -> dict:
     """Merge a batch of transactions into the user's stored data without deleting.
 
     Existing transactions are preserved and new rows are appended. Rows whose
@@ -782,6 +920,7 @@ def upsert_user_transactions(user_id: int, rows: list[dict]) -> dict:
                     dt = str(dt)
                 values.append((
                     user_id,
+                    company_domain,
                     dt,
                     row.get("Category", "Unknown"),
                     float(row.get("Amount", 0.0)),
@@ -798,7 +937,7 @@ def upsert_user_transactions(user_id: int, rows: list[dict]) -> dict:
                     from psycopg2.extras import execute_values
                     query = """
                         INSERT INTO transactions (
-                            user_id, date, category, amount, entity, type,
+                            user_id, company_domain, date, category, amount, entity, type,
                             severity, is_budget_breach, is_mom_anomaly, anomaly_reason
                         ) VALUES %s
                     """
@@ -806,9 +945,9 @@ def upsert_user_transactions(user_id: int, rows: list[dict]) -> dict:
                 else:
                     query = """
                         INSERT INTO transactions (
-                            user_id, date, category, amount, entity, type,
+                            user_id, company_domain, date, category, amount, entity, type,
                             severity, is_budget_breach, is_mom_anomaly, anomaly_reason
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """
                     cur.cur.executemany(query, values)
                 conn.commit()
@@ -878,17 +1017,33 @@ def insert_user_transactions(user_id: int, rows: list[dict]):
         conn.close()
 
 def get_user_transactions(user_id: int) -> list[dict]:
-    """Retrieves all transactions for a user, sorted by date."""
+    """Retrieves all transactions for a user's company, sorted by date."""
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute("""
-                SELECT id, user_id, date, category, amount, entity, type, 
-                       severity, is_budget_breach, is_mom_anomaly, anomaly_reason 
-                FROM transactions 
-                WHERE user_id = %s 
-                ORDER BY date ASC
-            """, (user_id,))
+            # Get the user's company_domain
+            cur.execute("SELECT company_domain FROM users WHERE id = %s", (user_id,))
+            user_row = cur.fetchone()
+            company_domain = user_row["company_domain"] if user_row else None
+
+            if company_domain:
+                # Query by company_domain to share data across company
+                cur.execute("""
+                    SELECT id, user_id, date, category, amount, entity, type, 
+                           severity, is_budget_breach, is_mom_anomaly, anomaly_reason 
+                    FROM transactions 
+                    WHERE company_domain = %s 
+                    ORDER BY date ASC
+                """, (company_domain,))
+            else:
+                # Fallback to user_id if no company_domain
+                cur.execute("""
+                    SELECT id, user_id, date, category, amount, entity, type, 
+                           severity, is_budget_breach, is_mom_anomaly, anomaly_reason 
+                    FROM transactions 
+                    WHERE user_id = %s 
+                    ORDER BY date ASC
+                """, (user_id,))
             rows = cur.fetchall()
             
             results = []

@@ -7,7 +7,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Re
 from pydantic import BaseModel
 
 from app.core.config import get_settings
-from app.core.security import get_current_user_id
+from app.core.security import get_admin_user_id, get_current_user_id
 from app.db.database import get_connection, get_user_settings, update_user_settings
 from app.db.unified_store import get_sync_status, update_sync_status
 from app.integrations.google_auth import exchange_code_for_token, get_auth_url
@@ -45,7 +45,7 @@ class DataConnectRequest(BaseModel):
     auth_code: str | None = None
 
 @router.post("/api/v1/data/connect")
-def connect_data(payload: DataConnectRequest, request: Request, user_id: int = Depends(get_current_user_id)):
+def connect_data(payload: DataConnectRequest, request: Request, user_id: int = Depends(get_admin_user_id)):
     provider = payload.provider.strip().lower()
 
     if provider in {"google", "google_sheets", "google_drive"}:
@@ -79,7 +79,7 @@ def connect_data(payload: DataConnectRequest, request: Request, user_id: int = D
 async def upload_file(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    user_id: int = Depends(get_current_user_id),
+    user_id: int = Depends(get_admin_user_id),
     file_type: str = None,
 ):
     settings = get_settings()
@@ -169,27 +169,32 @@ class StripeConnectRequest(BaseModel):
     api_key: str
 
 @router.post("/api/integrations/stripe/connect")
-def stripe_connect(payload: StripeConnectRequest, user_id: int = Depends(get_current_user_id)):
+def stripe_connect(payload: StripeConnectRequest, user_id: int = Depends(get_admin_user_id)):
     api_key = (payload.api_key or "").strip()
     if not api_key:
         raise HTTPException(status_code=400, detail="Stripe API key is required")
 
-    # Validate the key and retrieve the Stripe account ID before persisting.
+    # Validate the key before persisting.
     try:
         import stripe
         stripe.api_key = api_key
         stripe.Charge.list(limit=1)
-        # Retrieve the account ID so webhooks can resolve the owning user.
+    except Exception as e:
+        logger.warning("Stripe key rejected for user %s: %s", user_id, e)
+        raise HTTPException(status_code=400, detail=f"Stripe key rejected: {e}") from e
+
+    # Best-effort: retrieve the account ID so webhooks can resolve the owning user.
+    stripe_account_id = None
+    try:
         account = stripe.Account.retrieve("me")
         stripe_account_id = account.get("id")
     except Exception as e:
-        logger.warning("Stripe key rejected for user %s: %s", user_id, e)
-        raise HTTPException(status_code=400, detail="Stripe key rejected. Please check the key and try again.") from e
+        logger.warning("Could not retrieve Stripe account ID for user %s: %s", user_id, e)
 
-    update_user_settings(user_id, {
-        "stripe_secret_key": api_key,
-        "stripe_account_id": stripe_account_id,
-    })
+    settings_update = {"stripe_secret_key": api_key}
+    if stripe_account_id:
+        settings_update["stripe_account_id"] = stripe_account_id
+    update_user_settings(user_id, settings_update)
 
     from app.services.stripe_sync import sync_stripe_charges
     result = sync_stripe_charges(user_id, api_key)
@@ -210,7 +215,7 @@ def stripe_connect(payload: StripeConnectRequest, user_id: int = Depends(get_cur
     }
 
 @router.get("/api/integrations/stripe/status")
-def stripe_status(user_id: int = Depends(get_current_user_id)):
+def stripe_status(user_id: int = Depends(get_admin_user_id)):
     settings = get_user_settings(user_id)
     connected = bool((settings.get("stripe_secret_key") or "").strip())
     info = {
@@ -234,8 +239,42 @@ def stripe_status(user_id: int = Depends(get_current_user_id)):
             logger.warning("Could not load Stripe sync status for user %s", user_id, exc_info=True)
     return info
 
+@router.post("/api/integrations/stripe/test")
+def stripe_test(payload: StripeConnectRequest):
+    """Debug endpoint: test each Stripe API call separately."""
+    api_key = (payload.api_key or "").strip()
+    results = {}
+
+    try:
+        import stripe
+        stripe.api_key = api_key
+        results["sdk_import"] = "ok"
+    except Exception as e:
+        results["sdk_import"] = str(e)
+        return results
+
+    try:
+        stripe.Charge.list(limit=1)
+        results["charge_list"] = "ok"
+    except Exception as e:
+        results["charge_list"] = str(e)
+
+    try:
+        acct = stripe.Account.retrieve("me")
+        results["account_retrieve"] = f"ok - id={acct.get('id')}"
+    except Exception as e:
+        results["account_retrieve"] = str(e)
+
+    try:
+        bal = stripe.Balance.retrieve()
+        results["balance_retrieve"] = f"ok - available={bal.get('available', [])}"
+    except Exception as e:
+        results["balance_retrieve"] = str(e)
+
+    return results
+
 @router.post("/api/integrations/stripe/disconnect")
-def stripe_disconnect(user_id: int = Depends(get_current_user_id)):
+def stripe_disconnect(user_id: int = Depends(get_admin_user_id)):
     update_user_settings(user_id, {"stripe_secret_key": None, "stripe_account_id": None})
     try:
         update_sync_status(source="stripe", status="disconnected", record_count=None)
