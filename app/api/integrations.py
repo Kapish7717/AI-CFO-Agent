@@ -7,7 +7,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Re
 from pydantic import BaseModel
 
 from app.core.config import get_settings
-from app.core.security import get_admin_user_id, get_current_user_id
+from app.core.security import get_admin_user_id
 from app.db.database import get_connection, get_user_settings, update_user_settings
 from app.db.unified_store import get_sync_status, update_sync_status
 from app.integrations.google_auth import exchange_code_for_token, get_auth_url
