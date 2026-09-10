@@ -5,7 +5,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from app.agents.mcp_server import generate_cfo_pdf_report, get_user_state_paths
-from app.core.security import get_current_user_id
+from app.core.security import get_active_user_id
 from app.db.database import get_user_transactions
 from app.db.storage import download_from_storage
 
@@ -15,7 +15,7 @@ class ReportRequest(BaseModel):
     custom_instructions: str | None = None
 
 @router.post("/api/v1/report")
-async def generate_report_endpoint(payload: ReportRequest, user_id: int = Depends(get_current_user_id)):
+async def generate_report_endpoint(payload: ReportRequest, user_id: int = Depends(get_active_user_id)):
     rows = get_user_transactions(user_id)
     if not rows:
         raise HTTPException(status_code=400, detail="No data available. Please ingest financial data first.")
@@ -24,7 +24,7 @@ async def generate_report_endpoint(payload: ReportRequest, user_id: int = Depend
     return {"success": True, "message": result}
 
 @router.get("/api/download-report")
-def download_report_endpoint(user_id: int = Depends(get_current_user_id)):
+def download_report_endpoint(user_id: int = Depends(get_active_user_id)):
     _, report_file, _ = get_user_state_paths(user_id)
 
     # Try downloading PDF report from Supabase Storage
@@ -38,5 +38,5 @@ def download_report_endpoint(user_id: int = Depends(get_current_user_id)):
     raise HTTPException(status_code=404, detail="Report not found.")
 
 @router.get("/api/v1/report/download")
-def download_report_v1(user_id: int = Depends(get_current_user_id)):
+def download_report_v1(user_id: int = Depends(get_active_user_id)):
     return download_report_endpoint(user_id)

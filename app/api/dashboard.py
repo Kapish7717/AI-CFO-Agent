@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends
 
 from app.agents.mcp_server import get_user_state_paths
 from app.core.config import get_settings
-from app.core.security import get_current_user_id
+from app.core.security import get_active_user_id
 from app.db.database import get_user_settings, get_user_transactions
 from app.db.storage import download_from_storage
 
@@ -39,7 +39,7 @@ def get_selected_month_data_raw(df, month_str):
     }
 
 @router.get("/api/dashboard/overview")
-def get_dashboard_overview(month: str = None, user_id: int = Depends(get_current_user_id)):
+def get_dashboard_overview(month: str = None, user_id: int = Depends(get_active_user_id)):
     state_file, report_file, breaches_file = get_user_state_paths(user_id)
     cash_base = get_settings().CASH_BASE_AMOUNT
     

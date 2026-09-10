@@ -12,6 +12,8 @@ import {
   Settings2,
   Sparkles,
   LogOut,
+  Shield,
+  Users,
 } from "lucide-react";
 import {
   Sidebar,
@@ -40,18 +42,19 @@ const nav = [
     { title: "Anomalies", url: "/anomalies", icon: ShieldAlert },
   ]},
   { section: "Operations", items: [
-    { title: "Data Sources", url: "/data-sources", icon: Database },
+    { title: "Data Sources", url: "/data-sources", icon: Database, adminOnly: true },
     { title: "Reports", url: "/reports", icon: FileText },
-    { title: "Integrations", url: "/integrations", icon: Plug },
+    { title: "Integrations", url: "/integrations", icon: Plug, adminOnly: true },
   ]},
   { section: "Configuration", items: [
-    { title: "AI Settings", url: "/settings", icon: Settings2 },
+    { title: "AI Settings", url: "/settings", icon: Settings2, adminOnly: true },
+    { title: "Admin Panel", url: "/admin", icon: Shield, adminOnly: true },
   ]},
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = useRouterState({ select: (r) => r.location.pathname });
-  const { user, isAuthenticated, logout } = useAuth();
+  const { user, isAuthenticated, isAdmin, logout } = useAuth();
   const navigate = useNavigate();
 
   // Auth-gate every route except /auth.
@@ -107,19 +110,21 @@ export function AppShell({ children }: { children: ReactNode }) {
                 </SidebarGroupLabel>
                 <SidebarGroupContent>
                   <SidebarMenu>
-                    {group.items.map((item) => {
-                      const active = pathname === item.url;
-                      return (
-                        <SidebarMenuItem key={item.url}>
-                          <SidebarMenuButton asChild isActive={active} tooltip={item.title}>
-                            <Link to={item.url}>
-                              <item.icon className="h-4 w-4" />
-                              <span>{item.title}</span>
-                            </Link>
-                          </SidebarMenuButton>
-                        </SidebarMenuItem>
-                      );
-                    })}
+                    {group.items
+                      .filter((item) => !item.adminOnly || isAdmin)
+                      .map((item) => {
+                        const active = pathname === item.url;
+                        return (
+                          <SidebarMenuItem key={item.url}>
+                            <SidebarMenuButton asChild isActive={active} tooltip={item.title}>
+                              <Link to={item.url}>
+                                <item.icon className="h-4 w-4" />
+                                <span>{item.title}</span>
+                              </Link>
+                            </SidebarMenuButton>
+                          </SidebarMenuItem>
+                        );
+                      })}
                   </SidebarMenu>
                 </SidebarGroupContent>
               </SidebarGroup>
@@ -133,7 +138,10 @@ export function AppShell({ children }: { children: ReactNode }) {
               </div>
               <div className="flex flex-col leading-tight min-w-0 flex-1">
                 <span className="text-sm font-medium truncate">{user?.full_name || user?.email}</span>
-                <span className="text-[11px] text-muted-foreground truncate">{user?.role || "Member"}</span>
+                <span className="text-[11px] text-muted-foreground truncate flex items-center gap-1">
+                  {isAdmin && <Shield className="h-3 w-3 text-primary" />}
+                  {isAdmin ? "Admin" : "Member"}
+                </span>
               </div>
               <button
                 type="button"

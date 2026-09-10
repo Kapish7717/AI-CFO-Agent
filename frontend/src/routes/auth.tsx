@@ -32,7 +32,6 @@ function AuthPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
-  const [role, setRole] = useState("Finance Head");
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -46,7 +45,7 @@ function AuthPage() {
       if (mode === "login") {
         await login(email, password);
       } else {
-        await register({ email, password, full_name: fullName, role });
+        await register({ email, password, full_name: fullName });
       }
       toast.success(mode === "login" ? "Welcome back" : "Account created");
       navigate({ to: (search.redirect as any) || "/" });
@@ -94,10 +93,9 @@ function AuthPage() {
               <Input id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete={mode === "login" ? "current-password" : "new-password"} />
             </div>
             {mode === "register" && (
-              <div className="space-y-2">
-                <Label htmlFor="role">Role</Label>
-                <Input id="role" value={role} onChange={(e) => setRole(e.target.value)} />
-              </div>
+              <p className="text-xs text-muted-foreground text-center">
+                First user with your email domain becomes the admin automatically.
+              </p>
             )}
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? "Please wait…" : mode === "login" ? "Sign in" : "Create account"}

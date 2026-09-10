@@ -11,7 +11,7 @@ generate report -> email).
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from app.core.security import get_current_user_id
+from app.core.security import get_active_user_id
 from app.services.agent_runner import run_cfo_pipeline
 
 router = APIRouter()
@@ -22,7 +22,7 @@ class AgentRunRequest(BaseModel):
 
 
 @router.post("/api/agent/run")
-async def agent_run(req: AgentRunRequest, user_id: int = Depends(get_current_user_id)):
+async def agent_run(req: AgentRunRequest, user_id: int = Depends(get_active_user_id)):
     """Run the full CFO pipeline (ingest -> detect -> report -> email)."""
     result = await run_cfo_pipeline(user_id=user_id, to_email=req.to_email)
     return result

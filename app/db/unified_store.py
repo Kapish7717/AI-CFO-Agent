@@ -210,6 +210,7 @@ def _excel_record(user_id: int, row: dict) -> dict:
         amount_str = "0.00"
 
     key = "|".join([
+        str(user_id),
         date_str,
         raw_type,
         str(_pick(row, "Category", "category") or ""),

@@ -3,7 +3,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from app.core.security import get_current_user_id, mask_secret
+from app.core.security import get_admin_user_id, get_current_user_id, mask_secret
 from app.db.database import get_user_settings, update_user_settings
 
 logger = logging.getLogger("cfo.api.settings")
@@ -55,7 +55,7 @@ def get_settings(user_id: int = Depends(get_current_user_id)):
     }
 
 @router.post("/api/user-settings")
-def update_settings(updates: UserSettingsUpdate, user_id: int = Depends(get_current_user_id)):
+def update_settings(updates: UserSettingsUpdate, user_id: int = Depends(get_admin_user_id)):
     try:
         update_user_settings(user_id, updates.dict(exclude_unset=True))
         # Recompute + push budget breaches so the agent always reads fresh data.

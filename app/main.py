@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from app.api.admin import router as admin_router
 from app.api.agent import router as agent_router
 from app.api.anomaly import router as anomaly_router
 from app.api.auth import router as auth_router
@@ -99,6 +100,7 @@ else:
 
 # Include routers (their decorators define absolute paths).
 app.include_router(auth_router)
+app.include_router(admin_router)
 app.include_router(chat_router)
 app.include_router(dashboard_router)
 app.include_router(forecast_router)

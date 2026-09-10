@@ -13,8 +13,10 @@ from app.core.security import (
 from app.db.database import (
     create_user,
     delete_user_google_token,
+    extract_company_domain,
     get_user_by_email,
     get_user_by_id,
+    is_first_user_of_domain,
 )
 from app.integrations.google_auth import (
     exchange_code_for_token,
@@ -30,7 +32,6 @@ class RegisterRequest(BaseModel):
     email: str
     password: str
     full_name: str
-    role: str = "Finance Head"
 
 class LoginRequest(BaseModel):
     email: str
@@ -61,11 +62,24 @@ def register_user(req: RegisterRequest):
     if get_user_by_email(email):
         logger.warning(f"Registration failed: User with email {email} already exists.")
         raise HTTPException(status_code=409, detail="User with this email already exists.")
+
+    # Auto-detect role based on email domain
+    company_domain = extract_company_domain(email)
+    is_first_user = is_first_user_of_domain(company_domain)
+    role = "admin" if is_first_user else "user"
+
     try:
-        user_id = create_user(email, req.password, req.full_name, req.role)
-        logger.info(f"User registration successful. Created User ID: {user_id}")
-        token = create_access_token(user_id, email, req.role, req.full_name)
-        return {"success": True, "user_id": user_id, "token": token}
+        user_id = create_user(email, req.password, req.full_name, role, company_domain)
+        logger.info(f"User registration successful. Created User ID: {user_id} (role: {role})")
+        token = create_access_token(user_id, email, role, req.full_name, company_domain, True)
+        return {
+            "success": True,
+            "user_id": user_id,
+            "token": token,
+            "role": role,
+            "company_domain": company_domain,
+            "is_first_user": is_first_user,
+        }
     except Exception as e:
         logger.error(f"Error during registration for email {email}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Registration failed. Please try again.") from e
@@ -84,7 +98,8 @@ def login_user(req: LoginRequest):
             raise HTTPException(status_code=400, detail="Invalid email or password.")
 
         token = create_access_token(
-            user["id"], user["email"], user["role"], user.get("full_name") or ""
+            user["id"], user["email"], user["role"], user.get("full_name") or "",
+            user.get("company_domain"), user.get("is_active", True)
         )
         logger.info(f"Login successful for email: {email_clean} (User ID: {user['id']})")
         return {
@@ -95,6 +110,8 @@ def login_user(req: LoginRequest):
                 "email": user["email"],
                 "full_name": user["full_name"],
                 "role": user["role"],
+                "company_domain": user.get("company_domain"),
+                "is_active": user.get("is_active", True),
                 "avatar_url": user["avatar_url"]
             }
         }
@@ -114,6 +131,8 @@ def get_me(user_id: int = Depends(get_current_user_id)):
         "email": user["email"],
         "full_name": user["full_name"],
         "role": user["role"],
+        "company_domain": user.get("company_domain"),
+        "is_active": user.get("is_active", True),
         "avatar_url": user["avatar_url"]
     }
 

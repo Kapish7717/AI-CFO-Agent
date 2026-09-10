@@ -14,6 +14,8 @@ export interface StoredUser {
   email: string;
   full_name: string;
   role: string;
+  company_domain?: string | null;
+  is_active?: boolean;
   avatar_url?: string | null;
 }
 
@@ -96,12 +98,12 @@ function safeJson(text: string): any {
 
 // ---------- Auth ----------
 export const AuthAPI = {
-  register: (payload: { email: string; password: string; full_name: string; role?: string }) =>
+  register: (payload: { email: string; password: string; full_name: string }) =>
     authedFetch(url("/api/auth/register"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
-    }).then((r) => handle<{ success: boolean; user_id: number; token: string }>(r)),
+    }).then((r) => handle<{ success: boolean; user_id: number; token: string; role: string; company_domain: string; is_first_user: boolean }>(r)),
 
   login: (payload: { email: string; password: string }) =>
     authedFetch(url("/api/auth/login"), {
@@ -317,4 +319,49 @@ export const AgentAPI = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ user_id: userId ?? currentUserId(), question }),
     }).then((r) => handle<DataQueryResult>(r)),
+};
+
+// ---------- Admin ----------
+export interface AdminUser {
+  id: number;
+  email: string;
+  full_name: string;
+  role: string;
+  is_active: boolean;
+  created_at: string | null;
+}
+
+export interface CompanyInfo {
+  domain: string;
+  company_name: string | null;
+  user_count: number;
+  admin_count: number;
+  created_at: string | null;
+}
+
+export const AdminAPI = {
+  listUsers: () => authedFetch(url("/api/admin/users")).then((r) => handle<{ users: AdminUser[]; company_domain: string }>(r)),
+
+  updateUserRole: (userId: number, role: string) =>
+    authedFetch(url(`/api/admin/users/${userId}/role`), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ role }),
+    }).then((r) => handle<{ success: boolean; user_id: number; role: string }>(r)),
+
+  updateUserStatus: (userId: number, isActive: boolean) =>
+    authedFetch(url(`/api/admin/users/${userId}/status`), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ is_active: isActive }),
+    }).then((r) => handle<{ success: boolean; user_id: number; is_active: boolean }>(r)),
+
+  getCompany: () => authedFetch(url("/api/admin/company")).then((r) => handle<CompanyInfo>(r)),
+
+  updateCompany: (companyName: string) =>
+    authedFetch(url("/api/admin/company"), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ company_name: companyName }),
+    }).then((r) => handle<{ success: boolean }>(r)),
 };

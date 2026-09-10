@@ -3,7 +3,7 @@ import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from app.core.security import get_current_user_id
+from app.core.security import get_active_user_id
 from app.db.database import get_user_transactions, update_transaction_anomalies
 from app.tools.anomaly_detection import detect_all_anomalies
 
@@ -13,7 +13,7 @@ class AnomalyRequest(BaseModel):
     budget_limits: dict[str, float] | None = None
 
 @router.post("/api/v1/anomaly")
-def detect_anomaly(payload: AnomalyRequest, user_id: int = Depends(get_current_user_id)):
+def detect_anomaly(payload: AnomalyRequest, user_id: int = Depends(get_active_user_id)):
     rows = get_user_transactions(user_id)
     if not rows:
         raise HTTPException(status_code=400, detail="No transactions found for the user.")

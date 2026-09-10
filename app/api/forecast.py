@@ -2,7 +2,7 @@ import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from app.core.security import get_current_user_id
+from app.core.security import get_active_user_id
 from app.db.database import get_user_transactions
 
 router = APIRouter()
@@ -11,7 +11,7 @@ class ForecastRequest(BaseModel):
     months: int = 3
 
 @router.post("/api/v1/forecast")
-def forecast(payload: ForecastRequest, user_id: int = Depends(get_current_user_id)):
+def forecast(payload: ForecastRequest, user_id: int = Depends(get_active_user_id)):
     rows = get_user_transactions(user_id)
     if not rows:
         raise HTTPException(status_code=400, detail="No transactions found for forecasting.")

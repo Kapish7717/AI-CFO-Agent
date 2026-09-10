@@ -237,8 +237,10 @@ async def ingest_financial_data(expense_path_or_url: str, revenue_path_or_url: s
             # (e.g. older months) is preserved when new periods are uploaded.
             rows = df.to_dict('records')
             try:
-                from app.db.database import upsert_user_transactions
-                result = await asyncio.to_thread(upsert_user_transactions, user_id, rows)
+                from app.db.database import get_user_by_id, upsert_user_transactions
+                user = get_user_by_id(user_id)
+                company_domain = user.get("company_domain") if user else None
+                result = await asyncio.to_thread(upsert_user_transactions, user_id, rows, company_domain)
                 sys.stderr.write(
                     f"[DB] Merged {result.get('inserted', 0)} new / skipped "
                     f"{result.get('skipped', 0)} existing transactions for User {user_id}.\n"

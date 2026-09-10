@@ -1,5 +1,12 @@
-from tests.evals.agent_trajectory import DeviantPolicy, ScriptedPolicy, run_policy, score_trajectory, load_eval_set
 import json
+
+from tests.evals.agent_trajectory import (
+    DeviantPolicy,
+    ScriptedPolicy,
+    load_eval_set,
+    run_policy,
+    score_trajectory,
+)
 
 case = load_eval_set()['cases'][0]
 r1 = score_trajectory(run_policy(ScriptedPolicy(case['expected_tools'],case['required_args']),case['user_input']),case['expected_tools'],case['required_args'])

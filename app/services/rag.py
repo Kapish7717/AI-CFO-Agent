@@ -30,11 +30,10 @@ RERANK_URL = "https://api.jina.ai/v1/rerank"
 JINA_API_KEY = os.getenv("JINA_API_KEY", "").strip()
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip().strip('"').strip("'")
 
-# Prefer the app's financial tables when ranking/querying.
+# Only query the unified_transactions table — it already contains all data
+# from both Stripe and Excel uploads. The source column distinguishes them.
 PREFERRED_TABLES = (
-    "transactions",
     "unified_transactions",
-    "stripe_transactions",
 )
 
 
@@ -124,19 +123,28 @@ async def rank_tables(query: str, table_specs: list, top_n: int = 0) -> list:
         return [(0.0, spec) for spec in table_specs]
 
 
-def make_sql_prompt(query: str, table_specs: list) -> str:
+def make_sql_prompt(query: str, table_specs: list, user_id: int = 0) -> str:
     """Build the prompt asking the LLM to write a read-only SQL query."""
-    t1 = table_specs[0][1] if len(table_specs) > 0 else "None"
-    t2 = table_specs[1][1] if len(table_specs) > 1 else "None"
-    t3 = table_specs[2][1] if len(table_specs) > 2 else "None"
+    schemas = "\n\n".join(
+        f"Table {i+1}:\n{spec}" for i, (_, spec) in enumerate(table_specs)
+    )
     return (
         "Generate a SQL query to answer the following question from the user:\n"
         f'"{query}"\n\n'
         "The SQL query should use only tables with the following SQL definitions:\n\n"
-        f"Table 1:\n{t1}\n\n"
-        f"Table 2:\n{t2}\n\n"
-        f"Table 3:\n{t3}\n\n"
-        "Make sure you ONLY output a read-only SELECT (or WITH) SQL query and no explanation."
+        f"{schemas}\n\n"
+        "IMPORTANT RULES:\n"
+        "- Always query only the unified_transactions table — it contains all data.\n"
+        f"- ALWAYS filter by user_id = {user_id} — never return data from other users.\n"
+        "- The 'source' column indicates where the data came from: 'stripe' or 'excel'.\n"
+        "- The 'transaction_type' column has values: 'revenue', 'expense', 'refund' (all lowercase).\n"
+        "- The 'direction' column has values: 'inflow' (for revenue), 'outflow' (for expense/refund).\n"
+        "- For revenue totals, use: WHERE transaction_type = 'revenue'.\n"
+        "- For expense totals, use: WHERE transaction_type = 'expense'.\n"
+        "- When the user asks for totals, also break down the amounts by source "
+        "(stripe vs excel) using GROUP BY source.\n"
+        "- Dates are in the 'transaction_date' column.\n"
+        "- Make sure you ONLY output a read-only SELECT (or WITH) SQL query and no explanation."
     )
 
 
@@ -244,7 +252,7 @@ async def answer_with_rag(user_id: int, question: str) -> str:
         if not table_specs:
             return "No database tables available to query."
         ranked = await rank_tables(question, table_specs, top_n=3)
-        sql_prompt = make_sql_prompt(question, ranked)
+        sql_prompt = make_sql_prompt(question, ranked, user_id=user_id)
         sql = await generate_sql_query(sql_prompt, settings)
         sql_clean = sql.replace("```sql", "").replace("```", "").strip()
         if sql_clean.startswith("[llm error]") or sql_clean.startswith("[mock]"):

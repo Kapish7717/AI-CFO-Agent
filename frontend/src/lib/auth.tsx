@@ -4,8 +4,9 @@ import { AuthAPI, getStoredToken, getStoredUser, setStoredToken, setStoredUser, 
 interface AuthContextValue {
   user: StoredUser | null;
   isAuthenticated: boolean;
+  isAdmin: boolean;
   login: (email: string, password: string) => Promise<void>;
-  register: (payload: { email: string; password: string; full_name: string; role?: string }) => Promise<void>;
+  register: (payload: { email: string; password: string; full_name: string }) => Promise<void>;
   logout: () => void;
 }
 
@@ -38,10 +39,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const register = useCallback(
-    async (payload: { email: string; password: string; full_name: string; role?: string }) => {
+    async (payload: { email: string; password: string; full_name: string }) => {
       const res = await AuthAPI.register(payload);
       setStoredToken(res.token);
-      // Backend register returns user_id only; fetch full profile.
+      // Backend register returns user_id, role, and company_domain; fetch full profile.
       const me = await AuthAPI.me(res.user_id);
       setStoredUser(me);
       setUser(me);
@@ -56,7 +57,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, isAuthenticated: !!user, login, register, logout }}>
+    <AuthContext.Provider value={{ user, isAuthenticated: !!user, isAdmin: user?.role === "admin", login, register, logout }}>
       {children}
     </AuthContext.Provider>
   );

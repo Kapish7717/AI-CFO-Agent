@@ -1,35 +1,35 @@
 from __future__ import annotations
 
-import os
-import sys
 import json
 import logging
+import os
+import sys
 from datetime import datetime
+
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from typing import Optional, Any
 
 # Load environment variables (.env) before importing any modules that read them.
 load_dotenv()
 
 # Import default managers / config helpers
-from backend.services.session_manager import default_manager
-from backend.services.llm_factory import create_llm, generate_text
+from backend.api.agent import router as agent_router
+from backend.api.anomaly import router as anomaly_router
 
 # Import individual routers from backend/api
 from backend.api.auth import router as auth_router
 from backend.api.chat import router as chat_router
 from backend.api.dashboard import router as dashboard_router
 from backend.api.forecast import router as forecast_router
-from backend.api.anomaly import router as anomaly_router
 from backend.api.integrations import router as integrations_router
 from backend.api.providers import router as providers_router
 from backend.api.report import router as report_router
 from backend.api.settings import router as settings_router
-from backend.api.agent import router as agent_router
+from backend.services.llm_factory import create_llm, generate_text
+from backend.services.session_manager import default_manager
 
 # Configure logging
 logging.basicConfig(
@@ -100,8 +100,8 @@ async def _run_scheduled_pipeline(user_id: int):
 async def _scheduled_report_loop():
     """Every 60s, run the CFO pipeline for users whose report_schedule (HH:MM)
     matches the current time. Each user runs at most once per day."""
-    from datetime import datetime
     import asyncio
+    from datetime import datetime
 
     while True:
         try:
@@ -165,18 +165,18 @@ app.include_router(agent_router)
 
 
 class TestLLMRequest(BaseModel):
-    session_id: Optional[str] = None
-    provider: Optional[str] = None
-    model: Optional[str] = None
-    api_key: Optional[str] = None
+    session_id: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    api_key: str | None = None
     prompt: str
     save_session: bool = False
 
 
 class TestLLMResponse(BaseModel):
-    session_id: Optional[str]
-    provider: Optional[str]
-    model: Optional[str]
+    session_id: str | None
+    provider: str | None
+    model: str | None
     reply: str
 
 
@@ -242,8 +242,8 @@ async def serve_profile_image():
 
 
 # Serve React static files (fin-genie-os/dist) if built
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 frontend_dir = os.path.join(PROJECT_ROOT, "fin-genie-os", "dist", "client")
@@ -268,7 +268,7 @@ if os.path.exists(frontend_dir):
 # STRIPE_WEBHOOK_SECRET (from Stripe -> Developers -> Webhooks) is used only to
 # verify the request signature when provided; without it the webhook still works
 # in dev mode but skips signature verification.
-from db.unified_store import strip_unified_transaction, write_to_unified_store, update_sync_status
+from db.unified_store import strip_unified_transaction, update_sync_status, write_to_unified_store
 
 STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY")
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET")
