@@ -108,10 +108,11 @@ def test_extract_schema_returns_preferred_tables():
     assert "CREATE TABLE user_settings" not in joined
 
 
-def test_rank_tables_returns_unranked_without_key(monkeypatch):
+@pytest.mark.anyio
+async def test_rank_tables_returns_unranked_without_key(monkeypatch):
     monkeypatch.setattr(rag, "JINA_API_KEY", "")
     specs = ["CREATE TABLE transactions (id int);", "CREATE TABLE user_settings (id int);"]
-    ranked = rag.rank_tables("marketing spend", specs)
+    ranked = await rag.rank_tables("marketing spend", specs)
     assert len(ranked) == 2
     assert all(score == 0.0 for score, _ in ranked)
 
