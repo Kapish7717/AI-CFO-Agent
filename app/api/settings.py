@@ -3,7 +3,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from app.core.security import get_admin_user_id, get_current_user_id, mask_secret
+from app.core.security import get_current_user_id, mask_secret
 from app.db.database import get_user_settings, update_user_settings
 
 logger = logging.getLogger("cfo.api.settings")
@@ -55,9 +55,19 @@ def get_settings(user_id: int = Depends(get_current_user_id)):
     }
 
 @router.post("/api/user-settings")
-def update_settings(updates: UserSettingsUpdate, user_id: int = Depends(get_admin_user_id)):
+def update_settings(updates: UserSettingsUpdate, user_id: int = Depends(get_current_user_id)):
     try:
-        update_user_settings(user_id, updates.dict(exclude_unset=True))
+        update_dict = updates.dict(exclude_unset=True)
+
+        # Don't overwrite real API keys with masked values returned by GET.
+        # The frontend loads masked keys (e.g. "sk-…abcd") into the form;
+        # if the user saves without retyping, we must skip those fields.
+        for key in ("api_key", "fallback_api_key"):
+            val = update_dict.get(key)
+            if val and "…" in str(val):
+                update_dict.pop(key)
+
+        update_user_settings(user_id, update_dict)
         # Recompute + push budget breaches so the agent always reads fresh data.
         if any(updates.dict(exclude_unset=True).get(k) is not None for k in ("budget_marketing", "budget_operations", "budget_travel")):
             from app.services.budget_breaches import refresh_budget_breaches

@@ -15,7 +15,6 @@ def _fake_tool(name: str, result: str):
     return t
 
 
-# Create a simple mock tool for testing
 @tool
 def mock_authenticate_google() -> str:
     """Mock authentication tool"""
@@ -28,18 +27,14 @@ def mock_ingest_financial_data(expense_path_or_url: str) -> str:
 
 @pytest.mark.anyio
 @patch("app.agents.cfo_agent.get_all_tools")
-@patch("app.agents.cfo_agent.llm")
-async def test_agent_graph_execution(mock_llm, mock_get_tools):
-    # 1. Setup mock tools
+@patch("app.agents.cfo_agent.get_llm_with_tools")
+async def test_agent_graph_execution(mock_get_llm, mock_get_tools):
     mock_tools = [mock_authenticate_google, mock_ingest_financial_data]
     mock_get_tools.return_value = mock_tools
 
-    # Clear cached LLM and tools to force re-binding with our mocks
     agent._all_tools = None
     agent._llm_with_tools = None
 
-    # 2. Setup mock LLM response
-    # First response: Decides to call the mock_authenticate_google tool
     first_llm_response = AIMessage(
         content="",
         tool_calls=[{
@@ -48,50 +43,35 @@ async def test_agent_graph_execution(mock_llm, mock_get_tools):
             "id": "call_abc123"
         }]
     )
-    
-    # Second response: Summarizes after tool execution
     second_llm_response = AIMessage(
         content="Authentication was successful. I am now ready to proceed."
     )
 
-    # Configure the mock LLM to return the first response, then the second
-    mock_llm.bind_tools.return_value = mock_llm
+    mock_llm = MagicMock()
     mock_llm.ainvoke = AsyncMock(side_effect=[first_llm_response, second_llm_response])
+    mock_get_llm.return_value = mock_llm
 
-    # 3. Initialize state and run the graph
     initial_state = {"messages": [HumanMessage(content="Start the financial workflow.")]}
-    
-    # Run the compiled graph asynchronously
     result = await agent.graph.ainvoke(initial_state)
 
-    # 4. Assertions
     assert "messages" in result
     messages = result["messages"]
-    
-    # The conversation should have:
-    # 1. HumanMessage (input)
-    # 2. AIMessage (decides to call mock_authenticate_google)
-    # 3. ToolMessage (contains the tool execution result)
-    # 4. AIMessage (final summary response)
+
     assert len(messages) == 4
-    
-    # Check execution sequence
     assert messages[0].content == "Start the financial workflow."
     assert messages[1].tool_calls[0]["name"] == "mock_authenticate_google"
     assert isinstance(messages[2], ToolMessage)
     assert "Success" in messages[2].content
     assert messages[3].content == "Authentication was successful. I am now ready to proceed."
 
-    # Verify our mock LLM ainvoke was called exactly twice
     assert mock_llm.ainvoke.call_count == 2
 
 
 @pytest.mark.anyio
 @patch("app.agents.cfo_agent.get_all_tools")
-@patch("app.agents.cfo_agent.llm")
-async def test_agent_halts_on_tool_error(mock_llm, mock_get_tools):
-    """A failed tool result must route the graph to the halt node instead of
-    looping back into the LLM for a blind retry."""
+@patch("app.agents.cfo_agent.get_llm_with_tools")
+async def test_agent_halts_on_tool_error(mock_get_llm, mock_get_tools):
+    """A failed tool result must route the graph to the halt node."""
     mock_tools = [
         _fake_tool("mock_authenticate_google", "Success: Already authenticated."),
         _fake_tool("mock_ingest_financial_data", "Error: Expense file not found."),
@@ -101,7 +81,6 @@ async def test_agent_halts_on_tool_error(mock_llm, mock_get_tools):
     agent._all_tools = None
     agent._llm_with_tools = None
 
-    # LLM decides to call the ingest tool once; the tool then returns an error.
     llm_response = AIMessage(
         content="",
         tool_calls=[{
@@ -110,8 +89,9 @@ async def test_agent_halts_on_tool_error(mock_llm, mock_get_tools):
             "id": "call_xyz789",
         }]
     )
-    mock_llm.bind_tools.return_value = mock_llm
+    mock_llm = MagicMock()
     mock_llm.ainvoke = AsyncMock(return_value=llm_response)
+    mock_get_llm.return_value = mock_llm
 
     initial_state = {"messages": [HumanMessage(content="Run the ingest step.")]}
     result = await agent.graph.ainvoke(initial_state)
@@ -120,15 +100,14 @@ async def test_agent_halts_on_tool_error(mock_llm, mock_get_tools):
     assert isinstance(messages[-1], AIMessage)
     assert "Stopped: a required step failed" in messages[-1].content
 
-    # The agent LLM must not be called again after the error (no retry loop).
     assert mock_llm.ainvoke.call_count == 1
 
 
 @pytest.mark.anyio
 @patch("app.agents.cfo_agent.get_all_tools")
-@patch("app.agents.cfo_agent.llm")
-async def test_agent_routes_back_to_model_on_success(mock_llm, mock_get_tools):
-    """A successful tool result must loop back to the LLM (normal ReAct flow)."""
+@patch("app.agents.cfo_agent.get_llm_with_tools")
+async def test_agent_routes_back_to_model_on_success(mock_get_llm, mock_get_tools):
+    """A successful tool result must loop back to the LLM."""
     mock_tools = [
         _fake_tool("mock_authenticate_google", "Success: Already authenticated."),
         _fake_tool("mock_ingest_financial_data", "Success! Unified 100 rows."),
@@ -147,8 +126,9 @@ async def test_agent_routes_back_to_model_on_success(mock_llm, mock_get_tools):
         }]
     )
     second = AIMessage(content="Data ingested successfully.")
-    mock_llm.bind_tools.return_value = mock_llm
+    mock_llm = MagicMock()
     mock_llm.ainvoke = AsyncMock(side_effect=[first, second])
+    mock_get_llm.return_value = mock_llm
 
     initial_state = {"messages": [HumanMessage(content="Run the ingest step.")]}
     result = await agent.graph.ainvoke(initial_state)

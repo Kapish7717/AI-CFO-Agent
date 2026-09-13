@@ -9,7 +9,6 @@ from typing import Annotated, TypedDict
 
 from dotenv import load_dotenv
 from langchain_core.messages import AIMessage, BaseMessage, SystemMessage, ToolMessage
-from langchain_groq import ChatGroq
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import tools_condition
@@ -17,8 +16,6 @@ from langgraph.prebuilt import tools_condition
 load_dotenv()
 
 logger = logging.getLogger("cfo.agent")
-
-GROQ_MODEL = "llama-3.1-8b-instant"
 
 class AgentState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], operator.add]
@@ -41,8 +38,17 @@ mcp_config = {
     }
 }
 
-# Default LLM (fallback when a user has not configured their own provider/API key).
-llm = ChatGroq(model=GROQ_MODEL, temperature=0, groq_api_key=GROQ_API_KEY)
+# Default LLM — created lazily via the factory using the env GROQ key as fallback.
+_llm = None
+
+
+def _get_default_llm():
+    """Lazily create the default LLM using the factory (env GROQ key fallback)."""
+    global _llm
+    if _llm is None:
+        from app.services.llm_factory import create_llm
+        _llm = create_llm(provider="groq", model=None, api_key=GROQ_API_KEY or None)
+    return _llm
 
 if GROQ_API_KEY:
     logger.info("Default Groq API key is configured (first 4 chars: %s...).", GROQ_API_KEY[:4])
@@ -84,7 +90,7 @@ def build_llm_for_user(user_id: int):
         return None, None
 
     provider = (settings.get("llm_primary_provider") or "").strip().lower()
-    model = (settings.get("llm_primary_model") or "").strip() or GROQ_MODEL
+    model = (settings.get("llm_primary_model") or "").strip() or None
     api_key = (settings.get("api_key") or "").strip().strip('"').strip("'")
 
     # No custom provider or no key upload -> use default GROQ env key / module LLM.
@@ -153,7 +159,7 @@ async def get_llm_with_tools(user_id=None):
 
     if _llm_with_tools is not None:
         return _llm_with_tools
-    _llm_with_tools = llm.bind_tools(tools)
+    _llm_with_tools = _get_default_llm().bind_tools(tools)
     return _llm_with_tools
 
 
@@ -198,7 +204,7 @@ async def call_model(state: AgentState):
         "- Meeting times: If the user says 'tomorrow at 10am', calculate the ISO string based on current time.\n"
     ))
 
-    sys.stderr.write(f"\n[AGENT] Calling LLM ({GROQ_MODEL}) for user {user_id}...\n")
+    sys.stderr.write(f"\n[AGENT] Calling LLM for user {user_id}...\n")
     try:
         response = await llm_bound.ainvoke([system_prompt] + list(messages))
         return {"messages": [response]}
@@ -219,7 +225,6 @@ async def call_model(state: AgentState):
 
         # Optionally attempt a one-off fallback model if configured.
         allow_fallback = os.environ.get("ALLOW_MODEL_FALLBACK", "").lower() in ("1", "true", "yes")
-        fallback_model = os.environ.get("FALLBACK_MODEL", "llama-2-13b")
         if allow_fallback and err_text and "rate limit" in err_text.lower():
             try:
                 fallback_bound = None
@@ -229,7 +234,7 @@ async def call_model(state: AgentState):
                     fb_provider = (fb_settings.get("llm_fallback_provider") or "").strip().lower()
                     if fb_provider and fb_provider not in ("mock", "local", "none", "test"):
                         from app.services.llm_factory import create_llm
-                        fb_model = (fb_settings.get("llm_fallback_model") or "").strip() or fallback_model
+                        fb_model = (fb_settings.get("llm_fallback_model") or "").strip() or None
                         fb_key = (fb_settings.get("fallback_api_key") or fb_settings.get("api_key") or "").strip().strip('"').strip("'")
                         fb_llm = create_llm(provider=fb_provider, model=fb_model, api_key=fb_key)
                         fallback_bound = fb_llm.bind_tools(await get_all_tools())
@@ -237,10 +242,11 @@ async def call_model(state: AgentState):
                     sys.stderr.write(f"[AGENT] User fallback setup failed: {fb_err}\n")
 
                 if fallback_bound is None:
-                    fallback_llm = ChatGroq(model=fallback_model, temperature=0, groq_api_key=GROQ_API_KEY)
+                    from app.services.llm_factory import create_llm
+                    fallback_llm = create_llm(provider="groq", model=None, api_key=GROQ_API_KEY or None)
                     fallback_bound = fallback_llm.bind_tools(await get_all_tools())
 
-                sys.stderr.write(f"[AGENT] Attempting fallback model: {fallback_model}\n")
+                sys.stderr.write(f"[AGENT] Attempting fallback model...\n")
                 response = await fallback_bound.ainvoke([system_prompt] + list(messages))
                 return {"messages": [response]}
             except Exception as e2:

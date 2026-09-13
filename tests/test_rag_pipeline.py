@@ -79,11 +79,14 @@ class _FakeConnection:
         pass
 
 
-def _stub_pipeline(monkeypatch, fake_generate_text):
+def _stub_pipeline(monkeypatch, fake_generate_text, history=None, sql_rows=None):
     """Wire the RAG pipeline to the fake connection + stubbed LLM."""
     monkeypatch.setattr(rag, "get_connection", lambda: _FakeConnection())
     monkeypatch.setattr(rag, "get_user_settings", lambda user_id: {"llm_primary_provider": "mock", "api_key": ""})
+    monkeypatch.setattr(rag, "get_user_chat_history", lambda user_id, limit=10: history or [])
     monkeypatch.setattr(rag, "JINA_API_KEY", "")
+    if sql_rows is not None:
+        monkeypatch.setattr(rag, "sql_response", lambda sql, conn: sql_rows)
     return patch("app.services.llm_factory.generate_text", fake_generate_text)
 
 
@@ -133,7 +136,11 @@ def test_sql_response_executes_select():
 @pytest.mark.anyio
 async def test_rag_pipeline_end_to_end(monkeypatch):
     """Full pipeline: schema -> SQL -> execute -> grounded answer."""
-    with _stub_pipeline(monkeypatch, _realistic_llm):
+    fake_rows = [
+        {"category": "Marketing", "total": 1200},
+        {"category": "Payroll", "total": 5000},
+    ]
+    with _stub_pipeline(monkeypatch, _realistic_llm, sql_rows=fake_rows):
         answer = await rag.answer_with_rag(user_id=1, question="How much did we spend on Marketing?")
     assert "Marketing $1200" in answer
 
@@ -160,3 +167,92 @@ async def test_rag_pipeline_rejects_chained_statements(monkeypatch):
     with _stub_pipeline(monkeypatch, _chained_sql):
         answer = await rag.answer_with_rag(user_id=1, question="anything")
     assert "read-only" in answer
+
+
+# --------------------------------------------------------------------------- #
+# Conversation history context
+# --------------------------------------------------------------------------- #
+@pytest.mark.anyio
+async def test_conversation_history_injected_into_sql_prompt(monkeypatch):
+    """History messages must appear in the SQL generation prompt."""
+    captured_prompts = []
+
+    async def _capture_llm(model, prompt: str) -> str:
+        captured_prompts.append(prompt)
+        if "Generate a SQL query" in prompt:
+            return "SELECT category, SUM(amount) AS total FROM transactions GROUP BY category"
+        return "Total expense by category: Marketing $1200."
+
+    fake_history = [
+        {"sender": "user", "text": "What were our top expenses?"},
+        {"sender": "agent", "text": "Our top expenses were Payroll ($5000) and Marketing ($1200)."},
+    ]
+
+    monkeypatch.setattr(rag, "get_connection", lambda: _FakeConnection())
+    monkeypatch.setattr(rag, "get_user_settings", lambda uid: {"llm_primary_provider": "mock", "api_key": ""})
+    monkeypatch.setattr(rag, "get_user_chat_history", lambda uid, limit=10: fake_history)
+    monkeypatch.setattr(rag, "JINA_API_KEY", "")
+
+    with patch("app.services.llm_factory.generate_text", _capture_llm):
+        answer = await rag.answer_with_rag(user_id=1, question="What about Payroll?")
+
+    sql_prompt = captured_prompts[0]
+    assert "=== CONVERSATION HISTORY ===" in sql_prompt
+    assert "What were our top expenses?" in sql_prompt
+    assert "Our top expenses were Payroll" in sql_prompt
+    assert "=== END HISTORY ===" in sql_prompt
+    assert "What about Payroll?" in sql_prompt
+    assert answer  # got a response
+
+
+@pytest.mark.anyio
+async def test_conversation_history_injected_into_response_prompt(monkeypatch):
+    """History messages must also appear in the natural-language response prompt."""
+    captured_prompts = []
+
+    async def _capture_llm(model, prompt: str) -> str:
+        captured_prompts.append(prompt)
+        if "Generate a SQL query" in prompt:
+            return "SELECT category, SUM(amount) AS total FROM transactions GROUP BY category"
+        return "Payroll is $5000, which was the highest expense as discussed earlier."
+
+    fake_history = [
+        {"sender": "user", "text": "What were our top expenses?"},
+        {"sender": "agent", "text": "Payroll was the highest at $5000."},
+    ]
+
+    monkeypatch.setattr(rag, "get_connection", lambda: _FakeConnection())
+    monkeypatch.setattr(rag, "get_user_settings", lambda uid: {"llm_primary_provider": "mock", "api_key": ""})
+    monkeypatch.setattr(rag, "get_user_chat_history", lambda uid, limit=10: fake_history)
+    monkeypatch.setattr(rag, "JINA_API_KEY", "")
+
+    with patch("app.services.llm_factory.generate_text", _capture_llm):
+        await rag.answer_with_rag(user_id=1, question="How about Payroll?")
+
+    response_prompt = captured_prompts[1]
+    assert "=== CONVERSATION HISTORY ===" in response_prompt
+    assert "What were our top expenses?" in response_prompt
+    assert "Payroll was the highest" in response_prompt
+
+
+@pytest.mark.anyio
+async def test_no_history_when_empty(monkeypatch):
+    """When history is empty, no Conversation history block should appear."""
+    captured_prompts = []
+
+    async def _capture_llm(model, prompt: str) -> str:
+        captured_prompts.append(prompt)
+        if "Generate a SQL query" in prompt:
+            return "SELECT SUM(amount) FROM transactions"
+        return "Total spend: $6200."
+
+    monkeypatch.setattr(rag, "get_connection", lambda: _FakeConnection())
+    monkeypatch.setattr(rag, "get_user_settings", lambda uid: {"llm_primary_provider": "mock", "api_key": ""})
+    monkeypatch.setattr(rag, "get_user_chat_history", lambda uid, limit=10: [])
+    monkeypatch.setattr(rag, "JINA_API_KEY", "")
+
+    with patch("app.services.llm_factory.generate_text", _capture_llm):
+        await rag.answer_with_rag(user_id=1, question="Total spend?")
+
+    sql_prompt = captured_prompts[0]
+    assert "=== CONVERSATION HISTORY ===" not in sql_prompt

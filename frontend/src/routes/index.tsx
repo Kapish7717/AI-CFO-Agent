@@ -20,7 +20,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PageHeader } from "@/components/page-header";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { AgentAPI, DashboardAPI, SettingsAPI } from "@/lib/api";
+import { AgentAPI, DashboardAPI, SettingsAPI, StripeAPI } from "@/lib/api";
 import { GoogleAuthBar } from "@/components/google-auth-bar";
 import { toast } from "sonner";
 
@@ -46,6 +46,13 @@ function Dashboard() {
 
   const months = data?.available_months ?? [];
   const selected = data?.selected_month ?? month ?? "";
+
+  const { data: stripeData } = useQuery({
+    queryKey: ["stripe-transactions"],
+    queryFn: () => StripeAPI.transactions(10),
+    refetchOnWindowFocus: false,
+    refetchInterval: 15_000,
+  });
 
   return (
     <div>
@@ -157,18 +164,60 @@ function Dashboard() {
               </div>
             </div>
 
-            {/* Cash flow + insights */}
+            {/* Stripe transactions + insights */}
             <div className="grid gap-6 lg:grid-cols-3">
               <div className="rounded-xl border border-border bg-card p-6 lg:col-span-2">
-                <h3 className="font-display text-2xl">Cash Flow Summary</h3>
-                <p className="text-xs text-muted-foreground">{selected} · profit margin {data.profit_margin}%</p>
-                <div className="mt-6 grid grid-cols-3 gap-4">
-                  <CashCard label="Inflow" value={data.cash_inflow} tone="text-success" />
-                  <CashCard label="Outflow" value={data.cash_outflow} tone="text-destructive" />
-                  <CashCard label="Net" value={data.net_cash_flow} tone="text-foreground" />
+                <div className="flex items-center justify-between">
+                  <h3 className="font-display text-2xl">Latest Stripe Transactions</h3>
+                  {stripeData && stripeData.transactions.length > 0 && (
+                    <span className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Live</span>
+                  )}
                 </div>
-                <p className="mt-6 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Last sync</p>
-                <p className="text-sm num">{data.last_sync}</p>
+                <p className="text-xs text-muted-foreground">Recent payments processed via Stripe</p>
+                <div className="mt-5">
+                  {!stripeData || stripeData.transactions.length === 0 ? (
+                    <p className="text-sm text-muted-foreground py-4">No Stripe transactions found. Connect Stripe in Integrations to see transactions here.</p>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-border text-left text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+                            <th className="pb-2 pr-4 font-medium">Date</th>
+                            <th className="pb-2 pr-4 font-medium">Description</th>
+                            <th className="pb-2 pr-4 font-medium">Counterparty</th>
+                            <th className="pb-2 pr-4 font-medium">Type</th>
+                            <th className="pb-2 pr-4 font-medium">Status</th>
+                            <th className="pb-2 text-right font-medium">Amount</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-border">
+                          {stripeData.transactions.map((tx) => (
+                            <tr key={tx.external_id} className="text-sm">
+                              <td className="py-2.5 pr-4 text-muted-foreground whitespace-nowrap">
+                                {tx.transaction_date ? new Date(tx.transaction_date).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "—"}
+                              </td>
+                              <td className="py-2.5 pr-4 max-w-[200px] truncate">{tx.description || "—"}</td>
+                              <td className="py-2.5 pr-4 text-muted-foreground max-w-[150px] truncate">{tx.counterparty || "—"}</td>
+                              <td className="py-2.5 pr-4">
+                                <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${tx.direction === "inflow" ? "bg-success/10 text-success" : "bg-destructive/10 text-destructive"}`}>
+                                  {tx.transaction_type}
+                                </span>
+                              </td>
+                              <td className="py-2.5 pr-4">
+                                <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${tx.status === "succeeded" ? "bg-success/10 text-success" : "bg-muted text-muted-foreground"}`}>
+                                  {tx.status}
+                                </span>
+                              </td>
+                              <td className={`py-2.5 text-right font-medium num ${tx.direction === "inflow" ? "text-success" : "text-destructive"}`}>
+                                {tx.direction === "inflow" ? "+" : "-"}${tx.amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="rounded-xl border border-border bg-card p-6">
@@ -322,15 +371,6 @@ function KPI({ label, value, trend, invert }: { label: string; value: string; tr
           {trend.text}
         </span>
       </div>
-    </div>
-  );
-}
-
-function CashCard({ label, value, tone }: { label: string; value: string; tone: string }) {
-  return (
-    <div>
-      <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">{label}</p>
-      <p className={`mt-1 font-display text-2xl num ${tone}`}>{value}</p>
     </div>
   );
 }

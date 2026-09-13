@@ -162,7 +162,7 @@ def detect_budget_breaches(df: pd.DataFrame, budget_limits: dict = None) -> pd.D
                 actual_spend = float(row['Amount'])
                 if actual_spend > limit:
                     # Mark all rows of this category in this month as budget breaches
-                    mask = (df['Category'] == matching_cat) & (df['Type'] == 'Expense') & (df['Date'].dt.to_period('M') == ym)
+                    mask = df['Date'].notna() & (df['Category'] == matching_cat) & (df['Type'] == 'Expense') & (df['Date'].dt.to_period('M') == ym)
                     df.loc[mask, 'Is_Budget_Breach'] = True
                     df.loc[mask, 'Limit'] = float(limit)
                     df.loc[mask, 'Actual'] = float(actual_spend)
@@ -176,6 +176,8 @@ def detect_all_anomalies(df: pd.DataFrame, amount_col: str = 'Amount', budget_li
     Applies multiple anomaly detection methods, combines the results using logical OR,
     and calculates a severity score based on how many methods flagged the transaction.
     """
+    if 'Date' in df.columns:
+        df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
     df = detect_zscore_anomalies(df, column=amount_col)
     df = detect_iqr_anomalies(df, column=amount_col)
     df = detect_rule_based(df, amount_col=amount_col)

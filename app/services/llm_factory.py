@@ -192,6 +192,18 @@ def create_llm(provider: str, model: str | None = None, api_key: str | None = No
 		init.update(kwargs)
 		return ChatAnthropic(**init)
 
+	if provider == "openrouter":
+		if ChatOpenAI is None:
+			raise RuntimeError("ChatOpenAI is not available; install langchain-openai")
+		init = {
+			"model_name": model or "openai/gpt-4o",
+			"openai_api_base": "https://openrouter.ai/api/v1",
+		}
+		if api_key:
+			init["openai_api_key"] = api_key
+		init.update(kwargs)
+		return ChatOpenAI(**init)
+
 	raise NotImplementedError(f"LLM provider '{provider}' is not implemented in llm_factory")
 
 

@@ -358,6 +358,7 @@ async def detect_financial_anomalies(budget_limits: dict = None, user_id: int = 
                 
         return f"Analysis complete. Detected {count} high-severity budget breaches."
     except Exception as e:
+        sys.stderr.write(f"[MCP] detect_financial_anomalies error: {e}\n")
         return f"Analysis failed: {e}"
 
 @mcp.tool()
@@ -384,9 +385,21 @@ async def generate_cfo_pdf_report(custom_instructions: str = "", user_id: int = 
     try:
         df = pd.DataFrame(rows)
         sys.stderr.write(f"[MCP DEBUG] Data loaded: {len(df)} rows. Initializing ReportGenerator...\n")
+
+        # Load user's LLM settings so the report uses their chosen provider/model.
+        from app.db.database import get_user_settings
+        _settings = await asyncio.to_thread(get_user_settings, user_id)
+        llm_config = {
+            "provider": _settings.get("llm_primary_provider"),
+            "model": _settings.get("llm_primary_model"),
+            "api_key": _settings.get("api_key"),
+        }
+        sys.stderr.write(f"[MCP DEBUG] User LLM settings: provider={llm_config['provider']}, model={llm_config['model']}, api_key={'set' if llm_config['api_key'] else 'None'}\n")
+
         report_gen = ReportGenerator(df, output_path=report_file, 
                                      custom_instructions=custom_instructions, 
-                                     breaches_file=breaches_file)
+                                     breaches_file=breaches_file,
+                                     llm_config=llm_config)
         sys.stderr.write("[MCP DEBUG] Calling generate_pdf...\n")
         await asyncio.to_thread(report_gen.generate_pdf)
         sys.stderr.write("[MCP DEBUG] generate_pdf COMPLETED. Syncing to Cloud Storage...\n")

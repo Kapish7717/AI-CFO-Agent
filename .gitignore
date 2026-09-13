@@ -48,3 +48,4 @@ logs/
 # Private Data (Optional: if you don't want your raw excel files public)
 # *.xlsx
 # *.csv
+check_models.py

@@ -4,7 +4,6 @@ import sys
 
 import matplotlib
 import pandas as pd
-from langchain_groq import ChatGroq
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
@@ -24,8 +23,6 @@ import matplotlib.pyplot as plt
 
 plt.style.use('bmh')
 
-GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant")
-
 
 class ReportGenerator:
     """
@@ -33,10 +30,12 @@ class ReportGenerator:
     revenue, profit, anomalies, and month-over-month comparisons.
     """
     def __init__(self, df: pd.DataFrame, output_path: str = "business_cfo_report.pdf", 
-                 custom_instructions: str = "", budget_breaches: list = None, breaches_file: str = None):
+                 custom_instructions: str = "", budget_breaches: list = None, breaches_file: str = None,
+                 llm_config: dict = None):
         self.df = df.copy()
         self.output_path = output_path
         self.custom_instructions = custom_instructions
+        self.llm_config = llm_config or {}
         self.styles = getSampleStyleSheet()
         self.elements = []
 
@@ -89,13 +88,24 @@ class ReportGenerator:
     def generate_llm_narrative(self) -> dict:
         sys.stderr.write("[REPORT GEN] Starting LLM narrative generation...\n")
         
-        raw_key = os.environ.get("GROQ_API_KEY", "")
-        api_key = raw_key.strip().strip('"').strip("'")
+        from app.services.llm_factory import create_llm
+
+        # Use the user's configured LLM settings when available.
+        provider = self.llm_config.get("provider") or "groq"
+        model = self.llm_config.get("model")
+        api_key = self.llm_config.get("api_key")
+        sys.stderr.write(f"[REPORT GEN] LLM config: provider={provider}, model={model}, api_key={'set' if api_key else 'None'}\n")
 
         if not api_key:
-            sys.stderr.write("[REPORT GEN WARNING] No valid GROQ_API_KEY found. Skipping narrative.\n")
+            raw_key = os.environ.get("GROQ_API_KEY", "")
+            api_key = raw_key.strip().strip('"').strip("'")
+            if api_key and provider == "groq" and not model:
+                model = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
+
+        if not api_key:
+            sys.stderr.write("[REPORT GEN WARNING] No valid API key found. Skipping narrative.\n")
             return {
-                "exec": "LLM narrative generation skipped. GROQ_API_KEY missing.",
+                "exec": "LLM narrative generation skipped. No API key available.",
                 "rev": "N/A", "exp": "N/A", "anom": "N/A", "rec": "N/A", "custom": "N/A"
             }
 
@@ -164,13 +174,8 @@ Section 6: Custom Request Response (Directly address the USER SPECIFIC REQUEST a
             original_tracing = os.environ.get("LANGCHAIN_TRACING_V2")
             os.environ["LANGCHAIN_TRACING_V2"] = "false"
             
-            sys.stderr.write(f"[REPORT GEN] Calling Groq LLM ({GROQ_MODEL}) [Tracing: FORCED OFF]...\n")
-            client = ChatGroq(
-                model=GROQ_MODEL,
-                temperature=0.3,
-                groq_api_key=api_key,
-                request_timeout=60.0
-            )
+            sys.stderr.write(f"[REPORT GEN] Calling LLM ({provider}/{model}) [Tracing: FORCED OFF]...\n")
+            client = create_llm(provider=provider, model=model, api_key=api_key)
             
             # Use invoke with empty callbacks as a double-safety
             response = client.invoke(

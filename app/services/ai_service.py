@@ -65,6 +65,13 @@ def list_providers() -> list[str]:
             providers.append("anthropic")
     except Exception:
         pass
+    # OpenRouter uses the OpenAI-compatible API, so it's available when ChatOpenAI is.
+    try:
+        from app.services.llm_factory import ChatOpenAI
+        if ChatOpenAI is not None:
+            providers.append("openrouter")
+    except Exception:
+        pass
     providers.append("mock")
     return providers
 
@@ -130,7 +137,22 @@ def list_models(provider: str, api_key: str | None = None) -> list[str]:
     if p == "openai":
         return ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "o1", "o1-mini", "gpt-3.5-turbo"]
     if p == "groq":
-        return ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.6-27b", "allam-2-7b"]
+        return [
+            "openai/gpt-oss-120b",
+            "openai/gpt-oss-20b",
+            "openai/gpt-oss-safeguard-20b",
+            "qwen/qwen3.6-27b",
+            "qwen/qwen3.8-27b",
+            "allam-2-7b",
+            "groq/compound",
+            "groq/compound-mini",
+            "meta-llama/llama-prompt-guard-2-86m",
+            "meta-llama/llama-prompt-guard-2-22m",
+            "canopylabs/orpheus-v1-english",
+            "canopylabs/orpheus-arabic-saudi",
+            "whisper-large-v3",
+            "whisper-large-v3-turbo",
+        ]
     if p in {"gemini", "google", "google_genai"}:
         return ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"]
     if p in {"anthropic", "claude"}:

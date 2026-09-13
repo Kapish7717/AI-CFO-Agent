@@ -1,4 +1,5 @@
 import logging
+import math
 import os
 import sys
 
@@ -397,7 +398,7 @@ def init_db():
                 payment_method VARCHAR(50),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE (external_id, source)
+                UNIQUE (external_id, source, user_id)
             );
         """)
 
@@ -796,16 +797,20 @@ def delete_user_google_token(user_id: int):
         conn.close()
 
 # Chat Logs Helpers
-def get_user_chat_history(user_id: int, limit: int = 50):
+def get_user_chat_history(user_id: int, limit: int = 10):
     conn = get_connection()
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT sender, message_text as text, TO_CHAR(timestamp, 'HH24:MI:SS') as timestamp 
-                FROM user_chat_messages 
-                WHERE user_id = %s 
-                ORDER BY timestamp ASC 
-                LIMIT %s
+                SELECT sender, message_text as text, TO_CHAR(timestamp, 'HH24:MI:SS') as timestamp
+                FROM (
+                    SELECT sender, message_text, timestamp
+                    FROM user_chat_messages
+                    WHERE user_id = %s
+                    ORDER BY timestamp DESC
+                    LIMIT %s
+                ) recent
+                ORDER BY timestamp ASC
             """, (user_id, limit))
             return cur.fetchall()
     finally:
@@ -823,6 +828,15 @@ def save_user_chat_message(user_id: int, sender: str, text: str):
     except Exception as e:
         conn.rollback()
         raise e
+    finally:
+        conn.close()
+
+def clear_user_chat_history(user_id: int):
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM user_chat_messages WHERE user_id = %s", (user_id,))
+            conn.commit()
     finally:
         conn.close()
 
@@ -887,6 +901,13 @@ def upsert_user_transactions(user_id: int, rows: list[dict], company_domain: str
     conn = get_connection()
     try:
         with conn.cursor() as cur:
+            # Backfill company_domain on existing rows that are missing it
+            if company_domain:
+                cur.execute(
+                    "UPDATE transactions SET company_domain = %s WHERE user_id = %s AND (company_domain IS NULL OR company_domain = '')",
+                    (company_domain, user_id),
+                )
+
             # Load existing natural keys once.
             cur.execute(
                 "SELECT date, type, category, entity, amount FROM transactions WHERE user_id = %s",
@@ -1026,6 +1047,8 @@ def get_user_transactions(user_id: int) -> list[dict]:
             user_row = cur.fetchone()
             company_domain = user_row["company_domain"] if user_row else None
 
+            sys.stderr.write(f"[DB] get_user_transactions: user_id={user_id}, company_domain={company_domain!r}\n")
+
             if company_domain:
                 # Query by company_domain to share data across company
                 cur.execute("""
@@ -1035,6 +1058,17 @@ def get_user_transactions(user_id: int) -> list[dict]:
                     WHERE company_domain = %s 
                     ORDER BY date ASC
                 """, (company_domain,))
+                rows = cur.fetchall()
+                if not rows:
+                    sys.stderr.write(f"[DB] get_user_transactions: company_domain query returned 0 rows, falling back to user_id\n")
+                    cur.execute("""
+                        SELECT id, user_id, date, category, amount, entity, type, 
+                               severity, is_budget_breach, is_mom_anomaly, anomaly_reason 
+                        FROM transactions 
+                        WHERE user_id = %s 
+                        ORDER BY date ASC
+                    """, (user_id,))
+                    rows = cur.fetchall()
             else:
                 # Fallback to user_id if no company_domain
                 cur.execute("""
@@ -1044,7 +1078,8 @@ def get_user_transactions(user_id: int) -> list[dict]:
                     WHERE user_id = %s 
                     ORDER BY date ASC
                 """, (user_id,))
-            rows = cur.fetchall()
+                rows = cur.fetchall()
+            sys.stderr.write(f"[DB] get_user_transactions: found {len(rows)} rows\n")
             
             results = []
             for r in rows:
@@ -1059,7 +1094,12 @@ def get_user_transactions(user_id: int) -> list[dict]:
                         else:
                             dt_val = datetime.datetime.fromisoformat(dt_val.split('.')[0])
                     except Exception:
-                        pass
+                        dt_val = None
+                elif dt_val is not None and not isinstance(dt_val, (datetime.datetime, datetime.date)):
+                    try:
+                        dt_val = datetime.datetime.fromisoformat(str(dt_val))
+                    except Exception:
+                        dt_val = None
                         
                 amt_val = float(d.get('amount', 0.0))
                 
@@ -1094,7 +1134,7 @@ def update_transaction_anomalies(user_id: int, rows: list[dict]):
                         row.get('Severity', 'Normal'),
                         bool(row.get('Is_Budget_Breach', False)),
                         bool(row.get('Is_Mom_Anomaly', False)),
-                        row.get('Anomaly_Reason'),
+                        None if (reason := row.get('Anomaly_Reason')) is not None and isinstance(reason, float) and math.isnan(reason) else reason,
                         tx_id,
                         user_id
                     ))

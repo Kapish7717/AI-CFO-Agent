@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import re
@@ -155,10 +156,21 @@ async def upload_file(
 async def _ingest_uploaded_data(user_id: int):
     """Ingest the user's uploaded sheets and refresh budget breaches."""
     try:
-        from app.services.agent_runner import ingest_user_data
-        result = await ingest_user_data(user_id)
-        if not result.get("success"):
-            logger.warning("Upload ingest failed for user %s: %s", user_id, result.get("message"))
+        from app.agents.mcp_server import ingest_financial_data
+        from app.db.database import get_user_settings
+        from app.services.budget_breaches import refresh_budget_breaches
+
+        settings = await asyncio.to_thread(get_user_settings, user_id)
+        expense = settings.get("expense_url") or settings.get("expense_file_path")
+        revenue = settings.get("revenue_url") or settings.get("revenue_file_path")
+
+        if not expense:
+            logger.warning("No expense data to ingest for user %s", user_id)
+            return
+
+        result = await ingest_financial_data(expense, revenue, user_id=user_id)
+        refresh_budget_breaches(user_id)
+        logger.info("Upload ingest completed for user %s: %s", user_id, result[:200] if result else "done")
     except Exception as e:
         logger.error("Upload ingest error for user %s: %s", user_id, e, exc_info=True)
 
@@ -281,3 +293,28 @@ def stripe_disconnect(user_id: int = Depends(get_admin_user_id)):
     except Exception as e:
         logger.warning("Stripe disconnect status update failed: %s", e)
     return {"success": True, "connected": False}
+
+
+@router.get("/api/stripe/transactions")
+def get_stripe_transactions(limit: int = 10, user_id: int = Depends(get_admin_user_id)):
+    from app.db.pool import get_connection
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT external_id, transaction_type, direction, amount, currency,
+                       transaction_date, description, category, counterparty,
+                       status, payment_method
+                FROM unified_transactions
+                WHERE user_id = %s AND source = 'stripe'
+                ORDER BY transaction_date DESC NULLS LAST
+                LIMIT %s
+                """,
+                (user_id, limit),
+            )
+            rows = cur.fetchall()
+            col_names = [d.name for d in cur.description]
+            return {"transactions": [dict(zip(col_names, r)) for r in rows]}
+    finally:
+        conn.close()

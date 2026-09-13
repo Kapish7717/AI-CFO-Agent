@@ -369,27 +369,29 @@ def write_to_unified_store(records, user_id: int):
         updated_at
     )
     VALUES %s
-    ON CONFLICT (external_id, source)
+    ON CONFLICT (external_id, source, user_id)
     DO NOTHING
     """
 
-    # Pre-check which (external_id, source) pairs already exist so the inserted
-    # count is accurate. `execute_values`' rowcount only reflects the last chunk.
+    # Pre-check which (external_id, source, user_id) triples already exist so
+    # the inserted count is accurate. `execute_values`' rowcount only reflects
+    # the last chunk.
     existing = set()
-    by_source: dict[str, list[str]] = {}
+    by_user_source: dict[tuple[str, str], list[str]] = {}
     for r in normalized_records:
-        by_source.setdefault(r.get("source") or "unknown", []).append(r["external_id"])
-    for src, ids in by_source.items():
+        key = (r.get("source") or "unknown", str(r.get("user_id")))
+        by_user_source.setdefault(key, []).append(r["external_id"])
+    for (src, uid), ids in by_user_source.items():
         cur.execute(
-            "SELECT external_id FROM unified_transactions WHERE source = %s AND external_id = ANY(%s)",
-            (src, ids),
+            "SELECT external_id FROM unified_transactions WHERE source = %s AND user_id = %s AND external_id = ANY(%s)",
+            (src, uid, ids),
         )
         for (ext_id,) in cur.fetchall():
-            existing.add((src, ext_id))
+            existing.add((src, uid, ext_id))
 
     to_insert = [
         r for r in normalized_records
-        if (r.get("source") or "unknown", r["external_id"]) not in existing
+        if (r.get("source") or "unknown", str(r.get("user_id")), r["external_id"]) not in existing
     ]
     if not to_insert:
         cur.close()

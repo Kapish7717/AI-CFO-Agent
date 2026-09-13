@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from app.core.security import get_active_user_id
 from app.db.database import (
+    clear_user_chat_history,
     get_connection,
     get_user_chat_history,
     get_user_settings,
@@ -29,20 +30,16 @@ class ChatHistoryResponse(BaseModel):
 
 @router.get("/api/chat/history", response_model=list[ChatHistoryResponse])
 def chat_history(user_id: int = Depends(get_active_user_id)):
-    history = get_user_chat_history(user_id)
-    if not history:
-        return [
-            {
-                "sender": "agent",
-                "text": "Hi! 👋 I've initialized your workspace.\nHow can I help you today?",
-                "timestamp": "00:00:00"
-            }
-        ]
-    return history
+    return get_user_chat_history(user_id)
 
 @router.get("/api/v1/chat/history", response_model=list[ChatHistoryResponse])
 def chat_history_v1(user_id: int = Depends(get_active_user_id)):
     return chat_history(user_id)
+
+@router.delete("/api/chat/history")
+def clear_chat_history(user_id: int = Depends(get_active_user_id)):
+    clear_user_chat_history(user_id)
+    return {"success": True}
 
 class DataQueryRequest(BaseModel):
     question: str
@@ -124,7 +121,8 @@ async def test_rag(req: TestRagRequest, user_id : int = Depends(get_active_user_
                     "schema": s2
                 } for s,s2 in ranked]
 
-            sql_prompt = make_sql_prompt(req.question, ranked, user_id=user_id)
+            history = await asyncio.to_thread(get_user_chat_history, user_id, 10)
+            sql_prompt = make_sql_prompt(req.question, ranked, user_id=user_id, history=history)
             result["sql_prompt"] = sql_prompt
             llm = _llm_for(settings)
 
@@ -144,7 +142,7 @@ async def test_rag(req: TestRagRequest, user_id : int = Depends(get_active_user_
             rows = await asyncio.to_thread(sql_response, sql_clean, conn)
             result["sql_result"] = rows
 
-            answer = await rag_response(req.question, sql_clean, rows, settings)
+            answer = await rag_response(req.question, sql_clean, rows, settings, history=history)
             result["final_answer"] = answer
         finally:
             conn.close()

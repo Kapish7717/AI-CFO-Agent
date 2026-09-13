@@ -88,11 +88,33 @@ _report_last_run: dict = {}
 
 
 async def _run_scheduled_pipeline(user_id: int):
-    """Run one user's CFO pipeline in a detached background task."""
+    """Run one user's CFO pipeline via the autonomous agent."""
     try:
-        from backend.services.agent_runner import run_cfo_pipeline
-        result = await run_cfo_pipeline(user_id=user_id)
-        logger.info(f"[SCHEDULER] Pipeline result for user {user_id}: {result.get('message', 'done')}")
+        from app.db.database import get_user_settings
+
+        settings = get_user_settings(user_id)
+        expense = settings.get("expense_url") or settings.get("expense_file_path")
+        revenue = settings.get("revenue_url") or settings.get("revenue_file_path")
+        email = (settings.get("report_email") or "").strip()
+
+        if not expense:
+            logger.warning(f"[SCHEDULER] No expense data for user {user_id}")
+            return
+
+        import asyncio
+        from app.agents.cfo_agent import graph
+        from langchain_core.messages import HumanMessage
+
+        message = f"USER_ID: {user_id}\n\nRun the full CFO workflow:\n"
+        message += f"EXPENSE_FILE_PATH: {expense}\n"
+        if revenue:
+            message += f"REVENUE_FILE_PATH: {revenue}\n"
+        if email:
+            message += f"Send the report to {email}\n"
+
+        result = await graph.ainvoke({"messages": [HumanMessage(content=message)]})
+        final_msg = result["messages"][-1].content
+        logger.info(f"[SCHEDULER] Pipeline result for user {user_id}: {final_msg[:200]}")
     except Exception as e:
         logger.error(f"[SCHEDULER] Pipeline failed for user {user_id}: {e}")
 

@@ -237,6 +237,8 @@ export interface ChatMessage {
 
 export const ChatAPI = {
   history: (userId?: number) => authedFetch(withUserId("/api/chat/history", userId)).then((r) => handle<ChatMessage[]>(r)),
+  clearHistory: (userId?: number) =>
+    authedFetch(withUserId("/api/chat/history", userId), { method: "DELETE" }).then((r) => handle<{ success: boolean }>(r)),
 };
 
 // ---------- Uploads ----------
@@ -270,6 +272,20 @@ export interface StripeConnectResult {
   error?: string;
 }
 
+export interface StripeTransaction {
+  external_id: string;
+  transaction_type: string;
+  direction: string;
+  amount: number;
+  currency: string;
+  transaction_date: string | null;
+  description: string;
+  category: string;
+  counterparty: string;
+  status: string;
+  payment_method: string;
+}
+
 export const StripeAPI = {
   connect: (apiKey: string, userId?: number) =>
     authedFetch(withUserId("/api/integrations/stripe/connect", userId), {
@@ -285,6 +301,9 @@ export const StripeAPI = {
     authedFetch(withUserId("/api/integrations/stripe/disconnect", userId), {
       method: "POST",
     }).then((r) => handle<{ success: boolean; connected: boolean }>(r)),
+
+  transactions: (limit: number = 10, userId?: number) =>
+    authedFetch(withUserId(`/api/stripe/transactions?limit=${limit}`, userId)).then((r) => handle<{ transactions: StripeTransaction[] }>(r)),
 };
 
 // ---------- AI Agent ----------
