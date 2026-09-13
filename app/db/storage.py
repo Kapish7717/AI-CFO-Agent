@@ -53,7 +53,6 @@ def upload_to_storage(local_path: str, remote_path: str) -> str:
         logger.error(f"Local file does not exist for upload: {local_path}")
         return local_path
 
-    # Normalize remote path separators
     remote_path = remote_path.replace("\\", "/")
     try:
         with open(local_path, "rb") as f:
@@ -65,17 +64,41 @@ def upload_to_storage(local_path: str, remote_path: str) -> str:
             file=file_data,
             file_options={"upsert": "true"}
         )
-        # Get public URL
         public_url = client.storage.from_(BUCKET_NAME).get_public_url(remote_path)
         logger.info(f"Successfully uploaded. Public URL: {public_url}")
         return public_url
     except Exception as e:
-        logger.error(f"Failed to upload to Supabase Storage: {e}")
+        logger.warning(f"SDK upload failed ({e}), trying HTTP fallback...")
+        return _upload_via_http(client, local_path, remote_path, file_data)
+
+
+def _upload_via_http(client, local_path: str, remote_path: str, file_data: bytes) -> str:
+    """Fallback: upload via Supabase REST API using httpx."""
+    try:
+        supabase_url = os.environ.get("SUPABASE_URL", "")
+        supabase_key = os.environ.get("SUPABASE_KEY", "")
+        url = f"{supabase_url}/storage/v1/object/{BUCKET_NAME}/{remote_path}"
+        headers = {
+            "apikey": supabase_key,
+            "Authorization": f"Bearer {supabase_key}",
+            "Content-Type": "application/octet-stream",
+            "x-upsert": "true",
+        }
+        import httpx
+        with httpx.Client(timeout=30) as http:
+            resp = http.post(url, content=file_data, headers=headers)
+            resp.raise_for_status()
+        public_url = client.storage.from_(BUCKET_NAME).get_public_url(remote_path)
+        logger.info(f"Fallback HTTP upload succeeded. URL: {public_url}")
+        return public_url
+    except Exception as http_err:
+        logger.error(f"Fallback HTTP upload also failed: {http_err}")
         return local_path
 
 def download_from_storage(remote_path: str, local_path: str) -> bool:
     """
     Downloads a file from Supabase Storage and saves it to local_path.
+    Falls back to HTTP download via public URL if the SDK fails (e.g. SSL issues on Render).
     Returns True if successful, False otherwise.
     """
     client = get_storage_client()
@@ -87,21 +110,40 @@ def download_from_storage(remote_path: str, local_path: str) -> bool:
     try:
         logger.info(f"Downloading '{remote_path}' from Supabase bucket '{BUCKET_NAME}' to '{local_path}'...")
         res = client.storage.from_(BUCKET_NAME).download(remote_path)
-        
-        # Ensure parent folder exists
+
         os.makedirs(os.path.dirname(os.path.abspath(local_path)), exist_ok=True)
-        
+
         with open(local_path, "wb") as f:
             f.write(res)
-            
+
         logger.info(f"Successfully downloaded to '{local_path}'.")
         return True
     except Exception as e:
-        # Don't log full exception stack for normal 404 (file not found/initialized yet)
         if "The resource was not found" in str(e) or "Object not found" in str(e) or "404" in str(e):
             logger.info(f"File '{remote_path}' not found in Supabase Storage bucket (expected if not generated yet).")
-        else:
-            logger.error(f"Failed to download from Supabase Storage: {e}")
+            return False
+        logger.warning(f"SDK download failed ({e}), trying HTTP fallback...")
+        return _download_via_http(client, remote_path, local_path)
+
+
+def _download_via_http(client, remote_path: str, local_path: str) -> bool:
+    """Fallback: download via public URL using httpx (bypasses SDK SSL issues)."""
+    try:
+        public_url = client.storage.from_(BUCKET_NAME).get_public_url(remote_path)
+        if not public_url:
+            logger.error("Could not get public URL for fallback download.")
+            return False
+        import httpx
+        os.makedirs(os.path.dirname(os.path.abspath(local_path)), exist_ok=True)
+        with httpx.Client(timeout=30, follow_redirects=True) as http:
+            resp = http.get(public_url)
+            resp.raise_for_status()
+            with open(local_path, "wb") as f:
+                f.write(resp.content)
+        logger.info(f"Fallback HTTP download succeeded to '{local_path}'.")
+        return True
+    except Exception as http_err:
+        logger.error(f"Fallback HTTP download also failed: {http_err}")
         return False
 
 def get_public_url(remote_path: str) -> str:

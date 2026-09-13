@@ -1,12 +1,12 @@
-# STAGE 1: BUILD REACT FRONTEND USING OFFICIAL NODE IMAGE
+# STAGE 1: BUILD REACT FRONTEND
 FROM node:20-slim AS frontend-build
 WORKDIR /app/frontend
-COPY frontend/package.json frontend/bun.lock* ./
+COPY frontend/package.json frontend/package-lock.json* frontend/bun.lock* ./
 RUN npm install --legacy-peer-deps
 COPY frontend/ ./
 RUN npm run build
 
-# STAGE 2: PYTHON BACKEND & FINAL IMAGE
+# STAGE 2: PYTHON BACKEND
 FROM python:3.12-slim
 WORKDIR /app
 
@@ -31,13 +31,12 @@ COPY . .
 # Copy built frontend dist from STAGE 1
 COPY --from=frontend-build /app/frontend/dist/client /app/frontend/dist/client
 
-# Set permissions for Hugging Face Spaces (user ID 1000)
-ENV HOME=/tmp
-RUN chmod -R 777 /app && chmod -R 777 /tmp
+# Create uploads directory
+RUN mkdir -p uploads && chmod -R 777 uploads
 
-# Expose default Hugging Face port
-EXPOSE 7860
+# Use Render's $PORT env var (defaults to 10000)
+ENV PORT=10000
+EXPOSE $PORT
 
-# Start command
-RUN chmod +x start.sh
-CMD ["./start.sh"]
+# Start command — uses $PORT from Render
+CMD uvicorn app.main:app --host 0.0.0.0 --port $PORT
