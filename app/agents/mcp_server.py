@@ -293,7 +293,7 @@ async def ingest_financial_data(expense_path_or_url: str, revenue_path_or_url: s
                     pass
 
 @mcp.tool()
-async def detect_financial_anomalies(budget_limits: dict = None, user_id: int = None) -> str:
+async def detect_financial_anomalies(budget_limits: dict = {}, user_id: int = None) -> str:
     """
     Analyzes the ingested data for budget breaches and unusual patterns.
     """
@@ -307,7 +307,7 @@ async def detect_financial_anomalies(budget_limits: dict = None, user_id: int = 
     
     # Default to the budgets saved in user settings when the agent does not
     # pass explicit budget_limits, so analysis always matches the UI config.
-    if budget_limits is None:
+    if not budget_limits:
         try:
             from app.db.database import get_user_settings
             settings = await asyncio.to_thread(get_user_settings, user_id)
