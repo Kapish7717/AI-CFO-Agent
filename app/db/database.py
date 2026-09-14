@@ -1038,55 +1038,36 @@ def insert_user_transactions(user_id: int, rows: list[dict]):
         conn.close()
 
 def get_user_transactions(user_id: int) -> list[dict]:
-    """Retrieves all transactions for a user's company, sorted by date."""
+    """Retrieves all transactions from unified_transactions, sorted by date.
+
+    Maps unified_transactions columns to the legacy format expected by
+    dashboard, reports, and other callers:
+        transaction_date -> Date
+        transaction_type (revenue/expense) -> Type (Revenue/Expense)
+        counterparty -> Entity
+        amount -> Amount
+        category -> Category
+    """
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            # Get the user's company_domain
-            cur.execute("SELECT company_domain FROM users WHERE id = %s", (user_id,))
-            user_row = cur.fetchone()
-            company_domain = user_row["company_domain"] if user_row else None
+            cur.execute("""
+                SELECT id, user_id, transaction_date, category, amount,
+                       counterparty, transaction_type
+                FROM unified_transactions
+                WHERE user_id = %s
+                ORDER BY transaction_date ASC
+            """, (user_id,))
+            rows = cur.fetchall()
 
-            sys.stderr.write(f"[DB] get_user_transactions: user_id={user_id}, company_domain={company_domain!r}\n")
+            sys.stderr.write(f"[DB] get_user_transactions: found {len(rows)} rows from unified_transactions\n")
 
-            if company_domain:
-                # Query by company_domain to share data across company
-                cur.execute("""
-                    SELECT id, user_id, date, category, amount, entity, type, 
-                           severity, is_budget_breach, is_mom_anomaly, anomaly_reason 
-                    FROM transactions 
-                    WHERE company_domain = %s 
-                    ORDER BY date ASC
-                """, (company_domain,))
-                rows = cur.fetchall()
-                if not rows:
-                    sys.stderr.write("[DB] get_user_transactions: company_domain query returned 0 rows, falling back to user_id\n")
-                    cur.execute("""
-                        SELECT id, user_id, date, category, amount, entity, type, 
-                               severity, is_budget_breach, is_mom_anomaly, anomaly_reason 
-                        FROM transactions 
-                        WHERE user_id = %s 
-                        ORDER BY date ASC
-                    """, (user_id,))
-                    rows = cur.fetchall()
-            else:
-                # Fallback to user_id if no company_domain
-                cur.execute("""
-                    SELECT id, user_id, date, category, amount, entity, type, 
-                           severity, is_budget_breach, is_mom_anomaly, anomaly_reason 
-                    FROM transactions 
-                    WHERE user_id = %s 
-                    ORDER BY date ASC
-                """, (user_id,))
-                rows = cur.fetchall()
-            sys.stderr.write(f"[DB] get_user_transactions: found {len(rows)} rows\n")
-            
             results = []
             for r in rows:
                 d = dict(r)
-                
+
                 import datetime
-                dt_val = d.get('date')
+                dt_val = d.get('transaction_date')
                 if isinstance(dt_val, str):
                     try:
                         if ' ' in dt_val:
@@ -1100,21 +1081,24 @@ def get_user_transactions(user_id: int) -> list[dict]:
                         dt_val = datetime.datetime.fromisoformat(str(dt_val))
                     except Exception:
                         dt_val = None
-                        
+
                 amt_val = float(d.get('amount', 0.0))
-                
+
+                tx_type_raw = d.get('transaction_type', '')
+                tx_type = tx_type_raw.capitalize() if tx_type_raw else 'Expense'
+
                 mapped = {
                     'id': d.get('id'),
                     'user_id': d.get('user_id'),
                     'Date': dt_val,
                     'Category': d.get('category'),
                     'Amount': amt_val,
-                    'Entity': d.get('entity'),
-                    'Type': d.get('type'),
-                    'Severity': d.get('severity', 'Normal'),
-                    'Is_Budget_Breach': bool(d.get('is_budget_breach', False)),
-                    'Is_Mom_Anomaly': bool(d.get('is_mom_anomaly', False)),
-                    'Anomaly_Reason': d.get('anomaly_reason')
+                    'Entity': d.get('counterparty'),
+                    'Type': tx_type,
+                    'Severity': 'Normal',
+                    'Is_Budget_Breach': False,
+                    'Is_Mom_Anomaly': False,
+                    'Anomaly_Reason': None,
                 }
                 results.append(mapped)
             return results
