@@ -293,7 +293,7 @@ async def ingest_financial_data(expense_path_or_url: str, revenue_path_or_url: s
                     pass
 
 @mcp.tool()
-async def detect_financial_anomalies(budget_limits: dict = {}, user_id: int = None) -> str:
+async def detect_financial_anomalies(budget_limits: dict | None = None, user_id: int = None) -> str:
     """
     Analyzes the ingested data for budget breaches and unusual patterns.
     """
