@@ -48,11 +48,24 @@ async def agent_run(req: AgentRunRequest, user_id: int = Depends(get_active_user
 
     try:
         from app.agents.cfo_agent import graph
-        from langchain_core.messages import HumanMessage
+        from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
         result = await graph.ainvoke({"messages": [HumanMessage(content=message)]})
-        final_msg = result["messages"][-1].content
-        return {"success": True, "message": final_msg}
+        messages = result.get("messages", [])
+        final_msg = messages[-1].content if messages else "Agent run completed."
+
+        steps = []
+        for msg in messages:
+            if isinstance(msg, AIMessage) and msg.tool_calls:
+                for tc in msg.tool_calls:
+                    steps.append({"step": tc["name"], "message": "Started"})
+            elif isinstance(msg, ToolMessage):
+                steps.append({"step": "tool_result", "message": str(msg.content)[:200]})
+
+        if not steps:
+            steps = [{"step": "agent", "message": final_msg[:200]}]
+
+        return {"success": True, "message": final_msg, "steps": steps}
     except Exception as e:
         logger.error("Agent run failed for user %s: %s", user_id, e, exc_info=True)
         return {"success": False, "message": f"Agent run failed: {e}"}
