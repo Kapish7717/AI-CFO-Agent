@@ -246,7 +246,7 @@ async def call_model(state: AgentState):
                     fallback_llm = create_llm(provider="groq", model=None, api_key=GROQ_API_KEY or None)
                     fallback_bound = fallback_llm.bind_tools(await get_all_tools())
 
-                sys.stderr.write(f"[AGENT] Attempting fallback model...\n")
+                sys.stderr.write("[AGENT] Attempting fallback model...\n")
                 response = await fallback_bound.ainvoke([system_prompt] + list(messages))
                 return {"messages": [response]}
             except Exception as e2:

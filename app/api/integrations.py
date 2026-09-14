@@ -315,6 +315,6 @@ def get_stripe_transactions(limit: int = 10, user_id: int = Depends(get_admin_us
             )
             rows = cur.fetchall()
             col_names = [d.name for d in cur.description]
-            return {"transactions": [dict(zip(col_names, r)) for r in rows]}
+            return {"transactions": [dict(zip(col_names, r, strict=False)) for r in rows]}
     finally:
         conn.close()

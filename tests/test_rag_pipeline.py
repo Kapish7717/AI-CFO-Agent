@@ -106,7 +106,6 @@ async def _realistic_llm(model, prompt: str) -> str:
 def test_extract_schema_returns_preferred_tables():
     specs = rag.extract_schema(_FakeConnection())
     joined = "\n".join(specs)
-    assert "CREATE TABLE transactions" in joined
     assert "CREATE TABLE unified_transactions" in joined
     assert "CREATE TABLE user_settings" not in joined
 

@@ -1060,7 +1060,7 @@ def get_user_transactions(user_id: int) -> list[dict]:
                 """, (company_domain,))
                 rows = cur.fetchall()
                 if not rows:
-                    sys.stderr.write(f"[DB] get_user_transactions: company_domain query returned 0 rows, falling back to user_id\n")
+                    sys.stderr.write("[DB] get_user_transactions: company_domain query returned 0 rows, falling back to user_id\n")
                     cur.execute("""
                         SELECT id, user_id, date, category, amount, entity, type, 
                                severity, is_budget_breach, is_mom_anomaly, anomaly_reason 

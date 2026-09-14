@@ -47,8 +47,9 @@ async def agent_run(req: AgentRunRequest, user_id: int = Depends(get_active_user
         message += f"Send the report to {email}\n"
 
     try:
-        from app.agents.cfo_agent import graph
         from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+        from app.agents.cfo_agent import graph
 
         result = await graph.ainvoke({"messages": [HumanMessage(content=message)]})
         messages = result.get("messages", [])

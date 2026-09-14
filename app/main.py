@@ -132,8 +132,9 @@ async def _run_scheduled_pipeline(user_id: int):
             logger.warning("[SCHEDULER] No expense data for user %s", user_id)
             return
 
-        from app.agents.cfo_agent import graph
         from langchain_core.messages import HumanMessage
+
+        from app.agents.cfo_agent import graph
 
         message = f"USER_ID: {user_id}\n\nRun the full CFO workflow:\n"
         message += f"EXPENSE_FILE_PATH: {expense}\n"
