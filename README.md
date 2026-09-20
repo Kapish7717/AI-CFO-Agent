@@ -4,7 +4,10 @@
 
 Ingest data from multiple sources, detect anomalies and budget breaches, query your transaction database in natural language, generate professional PDF reports, dispatch them by email, and schedule review meetings — all orchestrated by an LLM agent.
 
-[![Live on Vercel](https://img.shields.io/badge/Live%20App-Vercel-black?style=for-the-badge&logo=vercel)](https://ai-cfo-agent-tau.vercel.app/)
+🔗 **[Check it live here](https://YOUR-VERCEL-URL.vercel.app)**
+
+[![Live Frontend on Vercel](https://img.shields.io/badge/Live%20App-Vercel-black?style=for-the-badge&logo=vercel)](https://ai-cfo-agent-tau.vercel.app/)
+[![Backend on Render](https://img.shields.io/badge/API-Render-46E3B7?style=for-the-badge&logo=render&logoColor=white)](https://YOUR-RENDER-URL.onrender.com)
 [![CI](https://github.com/Kapish7717/AI-CFO-Agent/actions/workflows/ci.yml/badge.svg)](https://github.com/Kapish7717/AI-CFO-Agent/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg?style=flat-square)](https://www.python.org/)
