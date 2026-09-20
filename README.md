@@ -4,7 +4,7 @@
 
 Ingest data from multiple sources, detect anomalies and budget breaches, query your transaction database in natural language, generate professional PDF reports, dispatch them by email, and schedule review meetings — all orchestrated by an LLM agent.
 
-🔗 **[Check it live here](https://YOUR-VERCEL-URL.vercel.app)**
+🔗 **[Check it live here](https://ai-cfo-agent-tau.vercel.app)**
 
 [![Live Frontend on Vercel](https://img.shields.io/badge/Live%20App-Vercel-black?style=for-the-badge&logo=vercel)](https://ai-cfo-agent-tau.vercel.app/)
 [![Backend on Render](https://img.shields.io/badge/API-Render-46E3B7?style=for-the-badge&logo=render&logoColor=white)](https://YOUR-RENDER-URL.onrender.com)
