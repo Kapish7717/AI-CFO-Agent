@@ -153,7 +153,14 @@ def test_route_after_anomaly():
 
 @pytest.mark.anyio
 async def test_graph_routes_to_reporting_when_flagged(monkeypatch):
-    """Full graph with stubbed stages: anomalies present -> reporting -> END."""
+    """Full graph with stubbed stages: anomalies present -> reporting -> END.
+
+    Every stage is stubbed, including reporting: this test is about the routing
+    decision, and the real reporting node would spawn MCP subprocesses and try
+    to generate a PDF.
+    """
+    seen: dict = {}
+
     async def stub_ingest(state):
         return {"source": "stripe", "sync_result": {"success": True, "record_count": 1}}
 
@@ -164,15 +171,20 @@ async def test_graph_routes_to_reporting_when_flagged(monkeypatch):
             "anomaly_result": {"success": True, "anomaly_count": 1, "rows_analyzed": 10},
         }
 
+    async def stub_reporting(state):
+        seen["ran"] = True
+        return {"report": {"success": True, "generated": True, "stub": True}}
+
     monkeypatch.setattr(pipeline, "stripe_ingestion_node", stub_ingest)
     monkeypatch.setattr(pipeline, "anomaly_detection_node", stub_anomaly)
+    monkeypatch.setattr(pipeline, "reporting_node", stub_reporting)
 
     graph = pipeline.build_graph()
     result = await graph.ainvoke({"user_id": 1, "trigger": "new_data"})
 
     assert result["anomaly_result"]["anomaly_count"] == 1
-    assert result["report"]["generated"] is False
-    assert result["report"]["anomaly_count"] == 1
+    assert seen.get("ran") is True, "conditional edge did not route to reporting"
+    assert result["report"]["stub"] is True
 
 
 @pytest.mark.anyio
@@ -187,8 +199,12 @@ async def test_graph_skips_reporting_when_clean(monkeypatch):
             "anomaly_result": {"success": True, "anomaly_count": 0, "rows_analyzed": 10},
         }
 
+    async def stub_reporting(state):
+        raise AssertionError("reporting must not run when nothing was flagged")
+
     monkeypatch.setattr(pipeline, "stripe_ingestion_node", stub_ingest)
     monkeypatch.setattr(pipeline, "anomaly_detection_node", stub_anomaly)
+    monkeypatch.setattr(pipeline, "reporting_node", stub_reporting)
 
     graph = pipeline.build_graph()
     result = await graph.ainvoke({"user_id": 1, "trigger": "new_data"})

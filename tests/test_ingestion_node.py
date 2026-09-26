@@ -232,8 +232,12 @@ async def test_node_reports_missing_write_tool(monkeypatch):
 
 @pytest.mark.anyio
 async def test_pipeline_graph_compiles_and_runs_with_mocked_node(monkeypatch):
-    """Compile the real graph; prove state flows START -> stripe_ingest -> END
-    by stubbing the single node."""
+    """Compile the real graph; prove state flows START -> stripe_ingest -> END.
+
+    Every downstream stage is stubbed as well: otherwise the real anomaly node
+    would spawn MCP subprocesses and query the live database, and the real
+    reporting node would try to generate a PDF.
+    """
     import app.graph.pipeline as pipeline
 
     async def stub_node(state):
@@ -242,7 +246,15 @@ async def test_pipeline_graph_compiles_and_runs_with_mocked_node(monkeypatch):
             "sync_result": {"success": True, "record_count": 7, "fetched": {}, "errors": None},
         }
 
+    async def stub_anomaly(state):
+        return {
+            "anomaly_flags": [],
+            "anomalies": [],
+            "anomaly_result": {"success": True, "anomaly_count": 0, "rows_analyzed": 0},
+        }
+
     monkeypatch.setattr(pipeline, "stripe_ingestion_node", stub_node)
+    monkeypatch.setattr(pipeline, "anomaly_detection_node", stub_anomaly)
     builder = pipeline.build_graph()
     result = await builder.ainvoke(
         {"user_id": 1, "trigger": "new_data", "fetch_limit": 25}, {"recursion_limit": 5}

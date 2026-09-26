@@ -1,5 +1,6 @@
-"""MCP clients for the pipeline graph — binds stripe-mcp + supabase-mcp tools
-via langchain-mcp-adapters (stdio transport, in-process subprocesses)."""
+"""MCP clients for the pipeline graph — binds stripe-mcp + supabase-mcp +
+reporting-mcp tools via langchain-mcp-adapters (stdio transport, in-process
+subprocesses)."""
 
 import os
 import sys
@@ -16,6 +17,12 @@ MCP_SERVERS = {
     "supabase": {
         "command": sys.executable,
         "args": ["-m", "app.mcp.supabase.server"],
+        "transport": "stdio",
+        "env": os.environ.copy(),
+    },
+    "reporting": {
+        "command": sys.executable,
+        "args": ["-m", "app.mcp.reporting.server"],
         "transport": "stdio",
         "env": os.environ.copy(),
     },

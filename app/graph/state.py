@@ -17,6 +17,8 @@ class PipelineState(TypedDict, total=False):
     fetch_limit: int  # per-fetch page size for the stripe-mcp tools
     analysis_limit: int  # rows pulled from unified_transactions for analysis
     budget_limits: dict | None  # optional per-category limits; else from settings
+    report_email: str | None  # report recipient override; else from settings
+    meeting: dict | None  # optional {attendees, start_time, end_time} dispatch
 
     # --- stage outputs --------------------------------------------------- #
     sync_result: dict | None
