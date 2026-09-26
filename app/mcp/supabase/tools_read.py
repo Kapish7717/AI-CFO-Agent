@@ -22,7 +22,12 @@ def _fetch_transactions(
     user_ids: list[int], clauses: list[tuple[str, object]], limit: int
 ) -> list[dict]:
     """Run a FIXED-column query against unified_transactions scoped to
-    ``user_ids`` with optional ``AND col op %s`` clauses (param etized)."""
+    ``user_ids`` with optional ``AND col op %s`` clauses (param etized).
+
+    Ordered newest-first so that ``limit`` keeps the most recent rows rather
+    than the oldest; callers analyzing recency (anomaly detection, cashflow
+    trend) depend on this.
+    """
     conn = get_connection()
     try:
         with conn.cursor() as cur:
@@ -35,7 +40,7 @@ def _fetch_transactions(
             for clause, val in clauses:
                 sql += f" AND {clause} %s"
                 params.append(val)
-            sql += " ORDER BY transaction_date ASC LIMIT %s"
+            sql += " ORDER BY transaction_date DESC LIMIT %s"
             params.append(limit)
             cur.execute(sql, tuple(params))
             return cur.fetchall()
@@ -85,8 +90,9 @@ async def list_transactions(
     The caller's company domain (all users sharing the same email domain) is
     always included. Optional filters: source (stripe/excel), category,
     direction (inflow/outflow), transaction_type (revenue/expense/refund) and
-    ISO date bounds for transaction_date. Returns newest-latest ordering by
-    transaction_date, limited to ``limit`` rows (default 1000).
+    ISO date bounds for transaction_date. Returns newest-first ordering by
+    transaction_date, limited to ``limit`` rows (default 1000), so a limit
+    smaller than the org's history keeps the most recent transactions.
     """
     return await asyncio.to_thread(
         _read_org_transactions,

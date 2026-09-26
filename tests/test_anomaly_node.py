@@ -203,3 +203,54 @@ def test_detector_frame_is_not_empty_for_anomalous_input():
     assert isinstance(frame, pd.DataFrame)
     assert set(["Amount", "Date", "Entity", "Type", "Category"]) <= set(frame.columns)
     assert pd.api.types.is_numeric_dtype(frame["Amount"])
+
+
+def test_is_analyzable_rejects_junk_rows():
+    """0-amount / epoch-date leftovers must not reach the detectors."""
+    assert node._is_analyzable({"amount": 12.5, "transaction_date": "2026-01-05T00:00:00"})
+    assert not node._is_analyzable({"amount": 0, "transaction_date": "2026-01-05T00:00:00"})
+    assert not node._is_analyzable({"amount": 0.0, "transaction_date": "1970-01-01T00:00:00"})
+    assert not node._is_analyzable({"amount": None, "transaction_date": "2026-01-05T00:00:00"})
+    assert not node._is_analyzable({"amount": 10, "transaction_date": None})
+    assert not node._is_analyzable({"amount": 10, "transaction_date": "not-a-date"})
+
+
+@pytest.mark.anyio
+async def test_node_skips_junk_rows_and_reports_count(monkeypatch):
+    """Junk rows are excluded from analysis but counted, never silently dropped."""
+    rows = _rows(20)
+    for i in range(5):
+        rows.append(
+            {"external_id": f"lc_{i}", "amount": 0.0, "transaction_date": "1970-01-01T00:00:00",
+             "transaction_type": "expense", "counterparty": None, "category": "expense"}
+        )
+    rows.append(
+        {"external_id": "lc_nodate", "amount": 42.0, "transaction_date": None,
+         "transaction_type": "expense", "counterparty": None, "category": "expense"}
+    )
+    _patch(monkeypatch, rows=rows)
+
+    out = await node.anomaly_detection_node({"user_id": 7})
+
+    assert out["anomaly_result"]["success"] is True
+    assert out["anomaly_result"]["rows_analyzed"] == 20
+    assert out["anomaly_result"]["rows_skipped"] == 6
+    assert not any(str(a["external_id"]).startswith("lc_") for a in out["anomalies"])
+
+
+@pytest.mark.anyio
+async def test_node_handles_all_rows_junk(monkeypatch):
+    _patch(
+        monkeypatch,
+        rows=[
+            {"external_id": "lc_1", "amount": 0.0, "transaction_date": "1970-01-01T00:00:00",
+             "transaction_type": "expense", "counterparty": None, "category": "expense"}
+        ],
+    )
+
+    out = await node.anomaly_detection_node({"user_id": 7})
+
+    assert out["anomaly_result"]["success"] is True
+    assert out["anomaly_result"]["rows_analyzed"] == 0
+    assert out["anomaly_result"]["rows_skipped"] == 1
+    assert out["anomaly_flags"] == []

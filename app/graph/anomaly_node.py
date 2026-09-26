@@ -93,6 +93,23 @@ def load_budget_limits(user_id: int) -> dict:
     return limits
 
 
+def _is_analyzable(row: dict) -> bool:
+    """Reject rows the detectors would misread.
+
+    Legacy Excel ingestion left rows with no amount (or 0) and an epoch date.
+    The duplicate and large-amount rules treat those as identical records, so
+    they flood the report with false positives. They are skipped here rather
+    than deleted; the caller reports how many were excluded.
+    """
+    amount = _to_float(row.get("amount"))
+    if amount is None or amount == 0:
+        return False
+    date = row.get("transaction_date")
+    if not date:
+        return False
+    return not pd.isna(pd.to_datetime(date, errors="coerce"))
+
+
 def _to_anomaly_records(analyzed: pd.DataFrame) -> list[dict]:
     """Reduce the analyzed frame to JSON-safe anomaly rows."""
     records: list[dict] = []
@@ -151,6 +168,7 @@ async def anomaly_detection_node(state: PipelineState) -> dict:
             "anomaly_result": {
                 "success": True,
                 "rows_analyzed": 0,
+                "rows_skipped": 0,
                 "anomaly_count": 0,
                 "severity_counts": {},
                 "flags": [],
@@ -159,7 +177,23 @@ async def anomaly_detection_node(state: PipelineState) -> dict:
             "anomaly_flags": [],
         }
 
-    frame = _to_detector_frame(rows)
+    analyzable = [row for row in rows if _is_analyzable(row)]
+    rows_skipped = len(rows) - len(analyzable)
+    if not analyzable:
+        return {
+            "anomaly_result": {
+                "success": True,
+                "rows_analyzed": 0,
+                "rows_skipped": rows_skipped,
+                "anomaly_count": 0,
+                "severity_counts": {},
+                "flags": [],
+            },
+            "anomalies": [],
+            "anomaly_flags": [],
+        }
+
+    frame = _to_detector_frame(analyzable)
     budget_limits = state.get("budget_limits")
     if not budget_limits:
         budget_limits = await asyncio.to_thread(load_budget_limits, user_id)
@@ -180,6 +214,7 @@ async def anomaly_detection_node(state: PipelineState) -> dict:
         "anomaly_result": {
             "success": True,
             "rows_analyzed": int(len(analyzed)),
+            "rows_skipped": rows_skipped,
             "anomaly_count": int(len(anomalies)),
             "severity_counts": {str(k): int(v) for k, v in severity_counts.items()},
             "flags": flags,
