@@ -3,7 +3,10 @@
 Every node reads context keys (user_id, trigger, source) and writes only its
 own stage output, so the graph stays deterministic and easy to reason about.
 The anomaly node populates ``anomalies`` / ``anomaly_flags`` / ``anomaly_result``;
-the reporting node populates ``report`` (still a stub until Step 5).
+the reporting node populates ``report``.
+
+The supervisor (Step 6) writes ``route`` / ``route_error`` and dispatches into a
+subgraph, so ``route`` is the only field that decides which stages run.
 """
 
 from typing import TypedDict
@@ -19,6 +22,11 @@ class PipelineState(TypedDict, total=False):
     budget_limits: dict | None  # optional per-category limits; else from settings
     report_email: str | None  # report recipient override; else from settings
     meeting: dict | None  # optional {attendees, start_time, end_time} dispatch
+    question: str | None  # chat trigger: the user's natural-language question
+
+    # --- supervisor ------------------------------------------------------ #
+    route: str | None  # "pipeline" | "analyst" | None when unroutable
+    route_error: str | None
 
     # --- stage outputs --------------------------------------------------- #
     sync_result: dict | None
@@ -26,3 +34,4 @@ class PipelineState(TypedDict, total=False):
     anomaly_flags: list[str]
     anomaly_result: dict | None
     report: dict | None
+    analyst: dict | None
