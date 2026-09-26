@@ -9,6 +9,7 @@ import pytest
 
 from app.graph import analyst_node, supervisor
 from app.graph.state import PipelineState
+from app.services import rag
 
 
 def _stub_subgraphs(monkeypatch, calls: list) -> None:
@@ -136,22 +137,37 @@ async def test_graph_does_not_dispatch_on_trigger_alone(monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_analyst_placeholder_reports_not_implemented():
-    result = await analyst_node.analyst_node({"user_id": 1, "question": "why?"})
+async def test_analyst_node_answers_through_the_rag_service(monkeypatch):
+    captured = {}
+
+    async def fake_answer(user_id, question):
+        captured["user_id"] = user_id
+        captured["question"] = question
+        return "Marketing spend was $1200."
+
+    monkeypatch.setattr(rag, "answer_with_rag", fake_answer)
+
+    result = await analyst_node.analyst_node(
+        {"user_id": 4, "trigger": "chat", "question": "why did marketing spend spike?"}
+    )
 
     assert result["analyst"]["success"] is True
-    assert result["analyst"]["implemented"] is False
-    assert result["analyst"]["question"] == "why?"
-    assert "Step 7" in result["analyst"]["detail"]
+    assert result["analyst"]["answer"] == "Marketing spend was $1200."
+    assert captured == {"user_id": 4, "question": "why did marketing spend spike?"}
 
 
 @pytest.mark.anyio
-async def test_analyst_placeholder_validates_input():
+async def test_analyst_node_validates_input():
     assert (await analyst_node.analyst_node({"question": "why?"}))["analyst"]["error"]
     assert (await analyst_node.analyst_node({"user_id": 1}))["analyst"]["error"]
     assert (
         await analyst_node.analyst_node({"user_id": 1, "question": "   "})
     )["analyst"]["error"]
+
+
+def test_analyst_subgraph_contains_only_the_analyst_node():
+    """The analyst answers a question; it must not re-sync a source."""
+    assert set(analyst_node.graph.get_graph().nodes) == {"__start__", "analyst", "__end__"}
 
 
 def test_supervisor_graph_compiles():

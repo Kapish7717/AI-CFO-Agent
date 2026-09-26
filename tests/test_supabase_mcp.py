@@ -260,6 +260,8 @@ async def test_server_registers_expected_tools():
         "list_transactions",
         "list_stripe_transactions",
         "get_sync_status",
+        "describe_table",
+        "run_read_only_sql",
         "write_transactions",
         "write_stripe_transactions",
         "mark_sync_status",

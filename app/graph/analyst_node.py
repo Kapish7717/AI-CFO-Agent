@@ -1,21 +1,18 @@
 # ==========================================================
-# Analyst subgraph (Step 6 placeholder for the "chat" trigger)
+# Analyst subgraph (Step 7: chat trigger)
 # ==========================================================
-# Step 6 routes "chat" to this subgraph. It is intentionally a marker, not a
-# second RAG implementation: the working path today is answer_with_rag() in
-# app/services/rag.py, reached via /api/chat/data-query, and that function still
-# queries Supabase directly. Step 7 moves it behind the supabase-mcp read tools
-# so the analyst gets the same org scoping and tool contract as every other
-# stage, at which point this node is replaced.
+# The "chat" trigger lands here. Answering a question is the Text-to-SQL RAG
+# service, and that service reads through the supabase-mcp query tools, so this
+# node inherits the same org scoping as every other stage. The node is a thin
+# adapter: it validates input and hands the answer back on state.
+#
+# The API's streaming variant of the same pipeline is
+# /api/chat/data-query/stream; a graph node cannot stream, so it uses the
+# non-streaming entry point.
 
 from langgraph.graph import END, START, StateGraph
 
 from app.graph.state import PipelineState
-
-UNMIGRATED = (
-    "Analyst path is not migrated yet; use /api/chat/data-query. "
-    "Step 7 moves RAG behind the supabase-mcp read tools."
-)
 
 
 async def analyst_node(state: PipelineState) -> dict:
@@ -24,14 +21,11 @@ async def analyst_node(state: PipelineState) -> dict:
     question = (state.get("question") or "").strip()
     if not question:
         return {"analyst": {"success": False, "error": "question is required"}}
-    return {
-        "analyst": {
-            "success": True,
-            "implemented": False,
-            "question": question,
-            "detail": UNMIGRATED,
-        }
-    }
+
+    from app.services.rag import answer_with_rag
+
+    answer = await answer_with_rag(user_id=state["user_id"], question=question)
+    return {"analyst": {"success": True, "question": question, "answer": answer}}
 
 
 def build_analyst_graph():

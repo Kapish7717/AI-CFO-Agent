@@ -2,12 +2,17 @@
 
 This module answers natural-language questions about the user's financial data:
 
-    1. Loads the live database schema (PostgreSQL/Supabase via DATABASE_URL).
+    1. Asks supabase-mcp for the schema of the tables the chat may read.
     2. Uses the Jina reranker API to pick the most relevant table schemas for
        the user's question.
     3. Asks the user's configured LLM to generate a read-only SQL query.
-    4. Executes the query against the database.
+    4. Hands the SQL to supabase-mcp, which runs it inside a read-only
+       transaction and returns only the caller's org rows.
     5. Asks the LLM to convert the result rows into a natural-language answer.
+
+Retrieval goes through the supabase-mcp query tools (steps 1 and 4), so this
+module holds no database connection and cannot read across tenants: the org
+boundary is enforced by the tool, not by the instructions in the prompt.
 
 It is fully separate from the CFO reporting agent. If JINA_API_KEY is missing or
 the reranker fails, the schemas are returned unranked so the chat still works.
@@ -15,14 +20,16 @@ the reranker fails, the schemas are returned unranked so the chat still works.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
-import re
 
 import httpx
 
-from app.db.database import get_connection, get_user_chat_history, get_user_settings
+from app.db.database import get_domain_user_ids, get_user_chat_history, get_user_settings
+from app.mcp.supabase.sql_guard import read_only as _read_only
+from app.mcp.supabase.tools_query import ScopeError, describe_table, run_read_only_sql
 
 logger = logging.getLogger("cfo.chat")
 
@@ -35,6 +42,14 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip().strip('"').strip("'")
 PREFERRED_TABLES = (
     "unified_transactions",
 )
+
+
+class RagAbort(Exception):
+    """Stop the pipeline with a user-facing message instead of an error page."""
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.message = message
 
 
 def _llm_for(settings):
@@ -57,30 +72,14 @@ async def _llm_answer(llm, prompt: str) -> str:
     return await generate_text(llm, prompt)
 
 
-def extract_schema(conn) -> list:
-    """Return ``CREATE TABLE``-style schema strings for the app tables."""
-    cur = conn.cursor()
-    cur.execute(
-        """
-        SELECT table_name, column_name, data_type
-        FROM information_schema.columns
-        WHERE table_schema = 'public'
-        ORDER BY table_name, ordinal_position;
-        """
-    )
-    columns = {}
-    for row in cur.fetchall():
-        table = row.get("table_name")
-        columns.setdefault(table, []).append((row.get("column_name"), row.get("data_type")))
-
-    specs = []
+async def _describe_chat_tables(user_id: int) -> list:
+    """Ask supabase-mcp for the schema of the tables the chat may read."""
+    specs: list = []
     for name in PREFERRED_TABLES:
-        if name not in columns:
-            continue
-        decl = f"CREATE TABLE {name} (\n" + ",\n".join(
-            f"  {col} {dtype}" for col, dtype in columns[name]
-        ) + "\n);"
-        specs.append(decl)
+        try:
+            specs.extend(await describe_table(user_id, name))
+        except Exception as e:
+            logger.warning("Could not describe %s for user %s: %s", name, user_id, e)
     return specs
 
 
@@ -155,7 +154,7 @@ def _build_history_block(history: list | None, max_chars: int = 300) -> str:
     return "\n\n".join(numbered)
 
 
-def make_sql_prompt(query: str, table_specs: list, user_id: int = 0, history: list | None = None) -> str:
+def make_sql_prompt(query: str, table_specs: list, user_id: int = 0, user_ids: list[int] | None = None, history: list | None = None) -> str:
     """Build the prompt asking the LLM to write a read-only SQL query."""
     schemas = "\n\n".join(
         f"Table {i+1}:\n{spec}" for i, (_, spec) in enumerate(table_specs)
@@ -173,6 +172,13 @@ def make_sql_prompt(query: str, table_specs: list, user_id: int = 0, history: li
             "=== END HISTORY ===\n\n"
         )
 
+    # Build the user_id filter for the SQL prompt
+    if user_ids and len(user_ids) > 1:
+        ids_str = ", ".join(str(uid) for uid in user_ids)
+        user_id_filter = f"ALWAYS filter by user_id IN ({ids_str}) — return data for the whole company."
+    else:
+        user_id_filter = f"ALWAYS filter by user_id = {user_id} — never return data from other users."
+
     return (
         "Generate a SQL query to answer the following question from the user:\n"
         f'"{query}"\n\n'
@@ -180,7 +186,10 @@ def make_sql_prompt(query: str, table_specs: list, user_id: int = 0, history: li
         f"{schemas}\n\n"
         "IMPORTANT RULES:\n"
         "- Always query only the unified_transactions table — it contains all data.\n"
-        f"- ALWAYS filter by user_id = {user_id} — never return data from other users.\n"
+        f"- {user_id_filter}\n"
+        "- Always include user_id in the SELECT list. The query is filtered to the "
+        "requesting company using that column before it runs, and cannot run at all "
+        "without it.\n"
         "- The 'source' column indicates where the data came from: 'stripe' or 'excel'.\n"
         "- The 'transaction_type' column has values: 'revenue', 'expense', 'refund' (all lowercase).\n"
         "- The 'direction' column has values: 'inflow' (for revenue), 'outflow' (for expense/refund).\n"
@@ -201,78 +210,50 @@ async def generate_sql_query(sql_prompt: str, settings: dict) -> str:
     return response.strip()
 
 
-_FORBIDDEN_KEYWORDS = re.compile(
-    r"\b(insert|update|delete|merge|drop|alter|create|truncate|grant|revoke|"
-    r"replace|call|copy|vacuum|analyze|reindex|comment|load|import|attach|"
-    r"detach|begin|commit|rollback|savepoint|reset|set)\b",
-    re.IGNORECASE,
-)
+async def _execute_scoped(user_id: int, sql_prompt: str, sql_clean: str, settings: dict) -> dict:
+    """Run the model's SQL through supabase-mcp, retrying once if unscopable.
 
-
-def _strip_sql_literals(sql: str) -> str:
-    """Remove comments and string literals so keyword checks see code only."""
-    s = re.sub(r"--[^\n]*", " ", sql)
-    s = re.sub(r"/\*.*?\*/", " ", s, flags=re.DOTALL)
-    # Replace single-quoted strings and double-quoted identifiers with spaces.
-    s = re.sub(r"'(\\.|[^'\\])*'", " ", s)
-    s = re.sub(r'"(\\.|[^"\\])*"', " ", s)
-    # Dollar-quoted bodies ($$ ... $$ or $tag$ ... $tag$).
-    s = re.sub(r"\$[A-Za-z_0-9]*\$.+?\$[A-Za-z_0-9]*\$", " ", s, flags=re.DOTALL)
-    return s
-
-
-def _read_only(sql: str) -> bool:
-    """Guard so the chat can only run read-only queries.
-
-    Requires the statement to start with SELECT/WITH AND contain no mutating
-    keyword (including inside data-modifying CTEs). A trailing statement
-    separator is tolerated, but chained multi-statement payloads are rejected.
+    ``run_read_only_sql`` applies the org filter itself, so a query that omits
+    ``user_id`` cannot be scoped. That is the one recoverable case: the model is
+    asked again with an explicit instruction rather than the user seeing an error.
     """
-    cleaned = _strip_sql_literals(sql or "").strip()
-    if not cleaned:
-        return False
-    lower = cleaned.lower()
-    if not lower.startswith(("select", "with")):
-        return False
-    # Split on ';' — a single trailing terminator is tolerated, but any
-    # additional statement (chained multi-statement payloads) is rejected.
-    parts = [p.strip() for p in cleaned.split(";")]
-    while parts and parts[-1] == "":
-        parts.pop()
-    if len(parts) > 1:
-        return False
-    if _FORBIDDEN_KEYWORDS.search(cleaned):
-        return False
-    return True
-
-
-def sql_response(sql_query: str, conn) -> list:
-    """Execute a cleaned read-only SQL query and return the rows as dicts.
-
-    The connection is forced into a read-only transaction as defense-in-depth:
-    even if a mutating statement slipped through the keyword guard, PostgreSQL
-    will reject it.
-    """
-    sql_clean = sql_query.replace("```sql", "").replace("```", "").strip().rstrip(";")
-    # End any transaction opened by earlier queries (e.g. schema extraction) so
-    # set_session can take effect.
     try:
-        conn.rollback()
-    except Exception:
-        pass
-    conn.set_session(readonly=True)
-    try:
-        cur = conn.cursor()
-        cur.execute(sql_clean)
-        rows = cur.fetchall()
-        return [dict(r) for r in rows] if rows else []
-    finally:
-        conn.rollback()
-        conn.set_session(readonly=False)
+        return await run_read_only_sql(user_id=user_id, sql=sql_clean)
+    except ScopeError:
+        logger.info("Regenerating SQL: projection omitted user_id (user %s)", user_id)
+        retry_prompt = (
+            f"{sql_prompt}\n\nIMPORTANT: your SELECT list must include the "
+            f"user_id column; the query is filtered to the requesting company "
+            f"using that column and cannot run without it."
+        )
+        sql_again = await generate_sql_query(retry_prompt, settings)
+        again = sql_again.replace("```sql", "").replace("```", "").strip()
+        if again.startswith("[llm error]") or again.startswith("[mock]"):
+            raise RagAbort(
+                "I couldn't generate a database query with the configured model. "
+                "Check the model in Settings, then try again."
+            ) from None
+        return await run_read_only_sql(user_id=user_id, sql=again)
 
 
 async def rag_response(query: str, sql_query: str, sql_result: list, settings: dict, history: list | None = None) -> str:
     """Turn the SQL result rows into a concise natural-language answer."""
+    prompt = _rag_prompt(query, sql_query, sql_result, history)
+    llm = _llm_for(settings)
+    return await _llm_answer(llm, prompt)
+
+
+async def rag_response_stream(query: str, sql_query: str, sql_result: list, settings: dict, history: list | None = None):
+    """Yield chunks of the natural-language answer as they arrive."""
+    prompt = _rag_prompt(query, sql_query, sql_result, history)
+    llm = _llm_for(settings)
+    from app.services.llm_factory import generate_text_stream
+    async for chunk in generate_text_stream(llm, prompt):
+        yield chunk
+
+
+def _rag_prompt(query: str, sql_query: str, sql_result: list, history: list | None = None) -> str:
+    """Build the prompt for the final natural-language RAG response."""
     history_block = _build_history_block(history, max_chars=500)
     history_section = ""
     if history_block:
@@ -283,7 +264,7 @@ async def rag_response(query: str, sql_query: str, sql_result: list, settings: d
             "=== END HISTORY ===\n\n"
         )
 
-    prompt = (
+    return (
         "You are a financial analyst. Use the information in the JSON table to answer "
         "the following user query. Do not explain anything, just answer concisely in "
         "natural language, not computer formatting.\n"
@@ -296,36 +277,76 @@ async def rag_response(query: str, sql_query: str, sql_result: list, settings: d
         "Use it to provide a clear, specific answer with actual numbers and details. "
         "Only answer \"No Information\" if the table is completely empty (has zero rows)."
     )
-    llm = _llm_for(settings)
-    return await _llm_answer(llm, prompt)
+
+
+async def _prepare_query(user_id: int, question: str) -> tuple[str, list, dict, list]:
+    """Run every non-streaming step and return ``(sql, rows, settings, history)``.
+
+    Both entry points share this: the streaming variant only differs in how the
+    final answer is delivered, so the retrieval work lives in one place.
+    """
+    # Independent reads run concurrently; the schema call and settings lookup are
+    # both thread-bound DB work.
+    settings_coro = asyncio.to_thread(get_user_settings, user_id)
+    schema_coro = _describe_chat_tables(user_id)
+    history_coro = asyncio.to_thread(get_user_chat_history, user_id, 10)
+    domain_coro = asyncio.to_thread(get_domain_user_ids, user_id)
+
+    settings, table_specs, history, domain_user_ids = await asyncio.gather(
+        settings_coro, schema_coro, history_coro, domain_coro
+    )
+
+    if not table_specs:
+        raise RagAbort("No database tables available to query.")
+
+    ranked = await rank_tables(question, table_specs, top_n=3)
+    sql_prompt = make_sql_prompt(
+        question, ranked, user_id=user_id, user_ids=domain_user_ids, history=history
+    )
+    sql = await generate_sql_query(sql_prompt, settings)
+    sql_clean = sql.replace("```sql", "").replace("```", "").strip()
+    if sql_clean.startswith("[llm error]") or sql_clean.startswith("[mock]"):
+        logger.error("RAG SQL generation failed for user %s: %s", user_id, sql_clean[:300])
+        raise RagAbort(
+            "I couldn't generate a database query with the configured model. "
+            "Check the model in Settings, then try again."
+        )
+    if not _read_only(sql_clean):
+        raise RagAbort("Sorry, I can only run read-only (SELECT) queries.")
+
+    result = await _execute_scoped(user_id, sql_prompt, sql_clean, settings)
+    return sql_clean, result["rows"], settings, history
 
 
 async def answer_with_rag(user_id: int, question: str) -> str:
     """Full Text-to-SQL RAG pipeline for a chat question."""
-    import asyncio
-    settings = await asyncio.to_thread(get_user_settings, user_id)
-    conn = await asyncio.to_thread(get_connection)
     try:
-        table_specs = await asyncio.to_thread(extract_schema, conn)
-        if not table_specs:
-            return "No database tables available to query."
-        ranked = await rank_tables(question, table_specs, top_n=3)
-        history = await asyncio.to_thread(get_user_chat_history, user_id, 10)
-        sql_prompt = make_sql_prompt(question, ranked, user_id=user_id, history=history)
-        sql = await generate_sql_query(sql_prompt, settings)
-        sql_clean = sql.replace("```sql", "").replace("```", "").strip()
-        if sql_clean.startswith("[llm error]") or sql_clean.startswith("[mock]"):
-            logger.error("RAG SQL generation failed for user %s: %s", user_id, sql_clean[:300])
-            return (
-                "I couldn't generate a database query with the configured model. "
-                "Check the model in Settings, then try again."
-            )
-        if not _read_only(sql_clean):
-            return "Sorry, I can only run read-only (SELECT) queries."
-        result = await asyncio.to_thread(sql_response, sql_clean, conn)
-        return await rag_response(question, sql_clean, result, settings, history=history)
+        sql_clean, rows, settings, history = await _prepare_query(user_id, question)
+    except RagAbort as e:
+        return e.message
     except Exception as e:
         logger.error(f"RAG query failed for user {user_id}: {e}")
         return f"Data query failed: {e}"
-    finally:
-        conn.close()
+    return await rag_response(question, sql_clean, rows, settings, history=history)
+
+
+async def answer_with_rag_stream(user_id: int, question: str):
+    """Full Text-to-SQL RAG pipeline that yields the final answer as a stream.
+
+    Non-streaming steps (schema, reranking, SQL generation, query execution)
+    happen upfront. Only the final natural-language response is streamed
+    token-by-token via ``yield``. This backs ``/api/chat/data-query/stream``,
+    the chat entry point the frontend uses.
+    """
+    try:
+        sql_clean, rows, settings, history = await _prepare_query(user_id, question)
+    except RagAbort as e:
+        yield e.message
+        return
+    except Exception as e:
+        logger.error(f"RAG query failed for user {user_id}: {e}")
+        yield f"Data query failed: {e}"
+        return
+
+    async for chunk in rag_response_stream(question, sql_clean, rows, settings, history=history):
+        yield chunk

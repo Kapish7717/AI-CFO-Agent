@@ -5,6 +5,7 @@ fully separate from the CFO reporting agent in ``app/api/agent.py``.
 """
 
 import asyncio
+import json
 import logging
 
 from fastapi import APIRouter, Depends
@@ -26,6 +27,7 @@ router = APIRouter()
 class ChatHistoryResponse(BaseModel):
     sender: str
     text: str
+    id: int
     timestamp: str
 
 @router.get("/api/chat/history", response_model=list[ChatHistoryResponse])
@@ -44,6 +46,9 @@ def clear_chat_history(user_id: int = Depends(get_active_user_id)):
 class DataQueryRequest(BaseModel):
     question: str
 
+# The frontend uses /api/chat/data-query/stream (SSE); this non-streaming
+# endpoint remains for API compatibility and shares the same supabase-mcp
+# backed retrieval.
 @router.post("/api/chat/data-query")
 async def chat_data_query(req: DataQueryRequest, user_id: int = Depends(get_active_user_id)):
     """Answer a question about the user's uploaded financial data via Jina RAG.
@@ -61,6 +66,41 @@ async def chat_data_query(req: DataQueryRequest, user_id: int = Depends(get_acti
         logger.warning("Could not persist chat for user %s: %s", user_id, e)
     return {"answer": answer, "success": True}
 
+@router.post("/api/chat/data-query/stream")
+async def chat_data_query_stream(req: DataQueryRequest, user_id: int = Depends(get_active_user_id)):
+    """Stream the RAG answer as SSE frames: ``data: {"chunk": ...}`` lines.
+
+    Canonical chat entry point: the frontend consumes this endpoint, and
+    retrieval runs through the supabase-mcp query tools so the answer is
+    scoped to the caller's org.
+    """
+    from fastapi.responses import StreamingResponse
+
+    from app.services.rag import answer_with_rag_stream
+
+    async def event_generator():
+        full_answer = ""
+        async for chunk in answer_with_rag_stream(user_id=user_id, question=req.question.strip()):
+            full_answer += chunk
+            yield f"data: {json.dumps({'chunk': chunk})}\n\n"
+        # Persist BEFORE sending done so history is available when the client refetches.
+        try:
+            await asyncio.to_thread(save_user_chat_message, user_id, "user", req.question.strip())
+            await asyncio.to_thread(save_user_chat_message, user_id, "agent", full_answer)
+        except Exception as e:
+            logger.warning("Could not persist chat for user %s: %s", user_id, e)
+        yield f"data: {json.dumps({'done': True, 'answer': full_answer})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
 class TestRagRequest(BaseModel):
     question : str
     provider : str | None = None
@@ -76,14 +116,14 @@ async def test_rag(req: TestRagRequest, user_id : int = Depends(get_active_user_
         _read_only,
         extract_schema,
         make_sql_prompt,
-        rag_response,
+        rag_response_stream,
         rank_tables,
         sql_response,
     )
 
     result = {
         "question": req.question,
-        "schema_extracted": [],
+        "schema_extracted": [], 
         "ranked_tables": [],
         "sql_prompt": None,
         "generated_sql": None,
@@ -142,7 +182,9 @@ async def test_rag(req: TestRagRequest, user_id : int = Depends(get_active_user_
             rows = await asyncio.to_thread(sql_response, sql_clean, conn)
             result["sql_result"] = rows
 
-            answer = await rag_response(req.question, sql_clean, rows, settings, history=history)
+            answer = ""
+            async for chunk in rag_response_stream(req.question, sql_clean, rows, settings, history=history):
+                answer += chunk
             result["final_answer"] = answer
         finally:
             conn.close()
