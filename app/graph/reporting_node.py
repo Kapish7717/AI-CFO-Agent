@@ -10,8 +10,8 @@
 
 import asyncio
 
-from app.graph.ingestion_node import _call, _ok_records
 from app.graph.mcp_client import get_pipeline_tools
+from app.graph.mcp_tools import _call, _ok_records
 from app.graph.state import PipelineState
 
 _EMAIL_SUBJECT = "Your CFO report is ready"
@@ -62,8 +62,17 @@ def _build_instructions(anomalies: list[dict], anomaly_result: dict) -> str:
 
 
 def _first(records: list[dict]) -> dict:
+    """Take the first usable result, surfacing the real error when there is none.
+
+    A failed tool call arrives as a record carrying ``error``. Discarding it in
+    favour of a generic message hid a 300s MCP timeout behind "returned no
+    result", so the underlying reason has to be carried through.
+    """
     rows = _ok_records(records)
-    return rows[0] if rows else {"error": "reporting tool returned no result"}
+    if rows:
+        return rows[0]
+    failure = next((r for r in records if isinstance(r, dict) and r.get("error")), None)
+    return {"success": False, "error": (failure or {}).get("error", "reporting tool returned no result")}
 
 
 async def reporting_node(state: PipelineState) -> dict:
@@ -84,6 +93,9 @@ async def reporting_node(state: PipelineState) -> dict:
             "generate_cfo_pdf_report",
             user_id=user_id,
             custom_instructions=instructions,
+            start_date=state.get("start_date"),
+            end_date=state.get("end_date"),
+            report_months=state.get("report_months"),
         )
     )
     steps.append({"step": "generate_cfo_pdf_report", **generated})

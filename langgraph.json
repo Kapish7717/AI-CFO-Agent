@@ -1,6 +1,6 @@
 {
     "graphs": {
-        "agent": "./app/agents/cfo_agent.py:graph"
+        "agent": "./app/graph/supervisor.py:graph"
     },
     "source": {
         "kind": "uv",

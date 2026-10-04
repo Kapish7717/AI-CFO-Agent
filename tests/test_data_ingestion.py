@@ -250,6 +250,55 @@ def test_excel_row_maps_to_unified_schema():
     assert ts["external_id"] == expense["external_id"]
 
 
+def test_excel_same_day_rows_with_different_times_stay_distinct():
+    # Two real charges on one day, same category, same counterparty, same amount.
+    # Hashing the date only to the day collapsed them into a single row, so one
+    # transaction silently vanished from every total and period comparison.
+    from app.db.unified_store import _excel_record
+
+    base = {
+        "Type": "Expense",
+        "Category": "Marketing",
+        "Entity": "Ads Inc",
+        "Amount": 500.0,
+    }
+    morning = _excel_record(4, {**base, "Date": "2026-05-01T09:30:00"})
+    evening = _excel_record(4, {**base, "Date": "2026-05-01T18:45:00"})
+    assert morning["external_id"] != evening["external_id"]
+
+    # Re-ingesting the same instant must still dedupe, whatever its representation.
+    assert _excel_record(4, {**base, "Date": "2026-05-01 09:30:00"})["external_id"] == morning["external_id"]
+    assert _excel_record(4, {**base, "Date": pd.Timestamp("2026-05-01 09:30:00")})["external_id"] == morning["external_id"]
+
+
+def test_excel_subsecond_precision_does_not_create_duplicates():
+    from app.db.unified_store import _excel_record
+
+    base = {
+        "Type": "Expense",
+        "Category": "Marketing",
+        "Entity": "Ads Inc",
+        "Amount": 500.0,
+    }
+    plain = _excel_record(4, {**base, "Date": "2026-05-01T09:30:00"})
+    noisy = _excel_record(4, {**base, "Date": "2026-05-01T09:30:00.482913"})
+    assert plain["external_id"] == noisy["external_id"]
+
+
+def test_excel_utc_timestamps_hash_the_same_as_their_naive_equivalent():
+    from app.db.unified_store import _excel_record
+
+    base = {
+        "Type": "Expense",
+        "Category": "Marketing",
+        "Entity": "Ads Inc",
+        "Amount": 500.0,
+    }
+    utc = _excel_record(4, {**base, "Date": "2026-05-01T09:30:00+00:00"})
+    naive = _excel_record(4, {**base, "Date": "2026-05-01T09:30:00"})
+    assert utc["external_id"] == naive["external_id"]
+
+
 @patch("gspread.authorize")
 @patch("app.integrations.google_auth.get_google_credentials")
 def test_load_from_google_sheets_gspread(mock_get_creds, mock_gspread_authorize):

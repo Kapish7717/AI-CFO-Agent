@@ -1,5 +1,5 @@
-"""Tests for supabase-mcp: org scoping helpers, read/write tool internals, and
-server tool registration.
+"""Tests for supabase-mcp: org scoping helpers, read tool internals, and server
+tool registration.
 
 Runs fully offline — DB access is patched; no Postgres/Supabase or MCP
 transport is required.
@@ -7,11 +7,10 @@ transport is required.
 
 import datetime as dt
 from decimal import Decimal
-from unittest.mock import Mock
 
 import pytest
 
-from app.mcp.supabase import org, tools_read, tools_transactions
+from app.mcp.supabase import org, tools_read
 
 
 # --------------------------------------------------------------------------- #
@@ -143,109 +142,39 @@ def test_read_org_transactions_includes_date_bounds(monkeypatch, scope_patches):
     assert fake.cursor_obj.params == (7, 8, "2026-01-01", "2026-01-31", 10)
 
 
-def test_read_stripe_transactions_scoped(monkeypatch, scope_patches):
-    fake = _FakeConn([{"id": 1, "external_id": "re_1", "raw_payload": {"x": 1}}])
+@pytest.mark.parametrize("bad", ["2026-13-45", "01/31/2026", "yesterday", "2026-99-99"])
+def test_read_org_transactions_rejects_malformed_date_bounds(
+    monkeypatch, scope_patches, bad
+):
+    # A typo is a valid string to parameterize, so without validation the query
+    # runs and returns zero rows, which reads as "no transactions" rather than
+    # "bad filter".
+    fake = _FakeConn([])
     monkeypatch.setattr(tools_read, "get_connection", lambda: fake)
 
-    out = tools_read._read_stripe_transactions(7, 5)
-
-    assert "WHERE user_id IN (%s, %s)" in fake.cursor_obj.executed
-    assert fake.cursor_obj.params == (7, 8, 5)
-    assert out[0]["raw_payload"] == {"x": 1}
-
-
-def test_get_sync_status_reads_store(monkeypatch, scope_patches):
-    monkeypatch.setattr(
-        tools_read,
-        "_store_get_sync_status",
-        lambda source: {
-            "source": source,
-            "status": "healthy",
-            "last_synced_at": dt.datetime(2026, 1, 1, 12, 0),
-            "record_count": 5,
-            "error_message": None,
-        },
-    )
-
-    out = tools_read._read_sync_status(7, "stripe")
-
-    assert out == {
-        "source": "stripe",
-        "status": "healthy",
-        "last_synced_at": "2026-01-01T12:00:00",
-        "record_count": 5,
-        "error_message": None,
-    }
+    with pytest.raises(ValueError, match="ISO date"):
+        tools_read._read_org_transactions(7, 10, start_date=bad)
+    # No query was ever issued, so this cannot be mistaken for an empty result.
+    assert fake.cursor_obj is None
 
 
-# --------------------------------------------------------------------------- #
-# write tools
-# --------------------------------------------------------------------------- #
-def test_write_transactions_normalizes_and_writes(monkeypatch, scope_patches):
-    mock_write = Mock(return_value=1)
-    monkeypatch.setattr(tools_transactions, "write_to_unified_store", mock_write)
-    payload = [
-        {
-            "object": "charge",
-            "id": "ch_1",
-            "amount": 5000,
-            "currency": "usd",
-            "status": "succeeded",
-            "created": 1767465600,
-            "billing_details": {"name": "Acme"},
-        }
-    ]
+def test_read_org_transactions_accepts_a_full_timestamp_bound(
+    monkeypatch, scope_patches
+):
+    fake = _FakeConn([])
+    monkeypatch.setattr(tools_read, "get_connection", lambda: fake)
 
-    out = tools_transactions._write_transactions(7, "stripe", payload)
-
-    assert out == {"inserted": 1, "total": 1}
-    written = mock_write.call_args.args[0]
-    assert written[0]["user_id"] == 7
-    assert written[0]["source"] == "stripe"
-    assert written[0]["amount"] == 50.0  # 5000 cents -> dollars
+    tools_read._read_org_transactions(7, 10, start_date="2026-01-01T09:30:00")
+    assert "transaction_date >= %s" in fake.cursor_obj.executed
 
 
-def test_write_transactions_empty(monkeypatch, scope_patches):
-    monkeypatch.setattr(tools_transactions, "write_to_unified_store", lambda recs, user_id: 0)
-    out = tools_transactions._write_transactions(7, "stripe", [])
-    assert out == {"inserted": 0, "total": 0}
+def test_read_org_transactions_allows_absent_bounds(monkeypatch, scope_patches):
+    fake = _FakeConn([])
+    monkeypatch.setattr(tools_read, "get_connection", lambda: fake)
 
+    tools_read._read_org_transactions(7, 10)
+    assert "transaction_date >=" not in fake.cursor_obj.executed
 
-def test_mark_sync_status(monkeypatch, scope_patches):
-    captured = {}
-
-    def fake_update(**kwargs):
-        captured.update(kwargs)
-
-    monkeypatch.setattr(tools_transactions, "update_sync_status", fake_update)
-
-    out = tools_transactions._mark_sync_status(7, "stripe", "healthy", record_count=3)
-
-    assert captured == {
-        "source": "stripe",
-        "status": "healthy",
-        "record_count": 3,
-        "error_message": None,
-    }
-    assert out == {"source": "stripe", "status": "healthy", "record_count": 3}
-
-
-def test_write_stripe_transactions(monkeypatch, scope_patches):
-    mock_store = Mock(return_value=2)
-    monkeypatch.setattr(tools_transactions, "store_stripe_transactions", mock_store)
-
-    out = tools_transactions._write_stripe_transactions(
-        7, [{"id": "ch_1"}, {"id": "ch_2"}, {"id": "ch_3"}]
-    )
-
-    assert out == {"inserted": 2, "total": 3}
-    written = mock_store.call_args.args[0]
-    assert [r["id"] for r in written] == ["ch_1", "ch_2", "ch_3"]
-
-
-def test_write_stripe_transactions_empty(monkeypatch, scope_patches):
-    monkeypatch.setattr(tools_transactions, "store_stripe_transactions", lambda recs, user_id: 0)
-    assert tools_transactions._write_stripe_transactions(7, []) == {"inserted": 0, "total": 0}
 
 
 # --------------------------------------------------------------------------- #
@@ -256,13 +185,10 @@ async def test_server_registers_expected_tools():
     from app.mcp.supabase.server import mcp
 
     tools = await mcp.list_tools()
+    # Read-only by construction: writes happen in the sync loop, the webhook and
+    # the upload ingest, none of which go through MCP.
     assert {t.name for t in tools} == {
         "list_transactions",
-        "list_stripe_transactions",
-        "get_sync_status",
         "describe_table",
         "run_read_only_sql",
-        "write_transactions",
-        "write_stripe_transactions",
-        "mark_sync_status",
     }

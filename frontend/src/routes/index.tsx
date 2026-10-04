@@ -248,6 +248,7 @@ function AgentRunPanel() {
   const qc = useQueryClient();
   const [email, setEmail] = useState("");
   const [schedule, setSchedule] = useState("");
+  const [months, setMonths] = useState(12);
 
   const { data: settings } = useQuery({
     queryKey: ["settings"],
@@ -259,6 +260,7 @@ function AgentRunPanel() {
     if (settings) {
       setEmail(settings.report_email ?? "");
       setSchedule(settings.report_schedule ?? "");
+      setMonths(settings.report_months ?? 12);
     }
   }, [settings]);
 
@@ -267,10 +269,11 @@ function AgentRunPanel() {
       SettingsAPI.update({
         report_email: email.trim() || null,
         report_schedule: schedule || null,
+        report_months: months,
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["settings"] });
-      toast.success("Report email & schedule saved");
+      toast.success("Report email, schedule & period saved");
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -336,9 +339,30 @@ function AgentRunPanel() {
           </div>
         </div>
 
+        <div className="space-y-2">
+          <Label htmlFor="agent-months" className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
+            Report period
+          </Label>
+          <Select value={String(months)} onValueChange={(v) => setMonths(Number(v))}>
+            <SelectTrigger id="agent-months" className="num">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {(settings?.report_month_options ?? [1, 3, 6, 12, 24, 36]).map((m) => (
+                <SelectItem key={m} value={String(m)} className="num">
+                  Last {m} {m === 1 ? "month" : "months"}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            Measured back from your most recent transaction.
+          </p>
+        </div>
+
         <Button variant="outline" size="sm" onClick={() => persist.mutate()} disabled={persist.isPending}>
           {persist.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-          Save email & schedule
+          Save email, schedule & period
         </Button>
       </div>
 

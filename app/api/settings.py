@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from app.core.security import get_current_user_id, mask_secret
 from app.db.database import get_user_settings, update_user_settings
+from app.graph.period import ALLOWED_MONTHS, normalize_months
 
 logger = logging.getLogger("cfo.api.settings")
 
@@ -29,6 +30,7 @@ class UserSettingsUpdate(BaseModel):
     fallback_api_key: str | None = None
     report_email: str | None = None
     report_schedule: str | None = None
+    report_months: int | None = None
 
 @router.get("/api/user-settings")
 def get_settings(user_id: int = Depends(get_current_user_id)):
@@ -51,7 +53,9 @@ def get_settings(user_id: int = Depends(get_current_user_id)):
         "api_key": mask_secret(settings.get("api_key")),
         "fallback_api_key": mask_secret(settings.get("fallback_api_key")),
         "report_email": settings.get("report_email"),
-        "report_schedule": settings.get("report_schedule")
+        "report_schedule": settings.get("report_schedule"),
+        "report_months": normalize_months(settings.get("report_months")),
+        "report_month_options": list(ALLOWED_MONTHS)
     }
 
 @router.post("/api/user-settings")
@@ -66,6 +70,16 @@ def update_settings(updates: UserSettingsUpdate, user_id: int = Depends(get_curr
             val = update_dict.get(key)
             if val and "…" in str(val):
                 update_dict.pop(key)
+
+        # Reject an out-of-range period outright rather than silently clamping it,
+        # so the user finds out their choice was not honoured.
+        if "report_months" in update_dict and update_dict["report_months"] is not None:
+            requested = update_dict["report_months"]
+            if requested not in ALLOWED_MONTHS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"report_months must be one of {list(ALLOWED_MONTHS)}.",
+                )
 
         update_user_settings(user_id, update_dict)
         # Recompute + push budget breaches so the agent always reads fresh data.

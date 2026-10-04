@@ -5,9 +5,9 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
 
 from app.db.database import get_connection
-from app.db.unified_store import get_sync_status as _store_get_sync_status
 from app.mcp.supabase.org import jsonable, resolve_org_scope
 
 # Canonical unified_transactions projection (every source shares this shape).
@@ -48,6 +48,21 @@ def _fetch_transactions(
         conn.close()
 
 
+def _validate_iso_date(label: str, value: str | None) -> None:
+    """Reject a malformed date bound instead of letting it match nothing.
+
+    A typo like "2026-13-45" is a perfectly valid string to parameterize, so the
+    query runs and returns zero rows, which reads as "this user has no
+    transactions" rather than "this filter is wrong".
+    """
+    if value is None:
+        return
+    try:
+        datetime.date.fromisoformat(value.strip()[:10])
+    except ValueError as exc:
+        raise ValueError(f"{label} must be an ISO date (YYYY-MM-DD), got {value!r}") from exc
+
+
 def _read_org_transactions(
     user_id: int,
     limit: int,
@@ -60,6 +75,8 @@ def _read_org_transactions(
     end_date: str | None = None,
 ) -> list[dict]:
     user_ids = resolve_org_scope(user_id)
+    _validate_iso_date("start_date", start_date)
+    _validate_iso_date("end_date", end_date)
     clauses: list[tuple[str, object]] = []
     for col, op, val in (
         ("source", "=", source),
@@ -105,49 +122,3 @@ async def list_transactions(
         start_date=start_date,
         end_date=end_date,
     )
-
-
-def _read_stripe_transactions(user_id: int, limit: int) -> list[dict]:
-    user_ids = resolve_org_scope(user_id)
-    conn = get_connection()
-    try:
-        with conn.cursor() as cur:
-            placeholders = ", ".join(["%s"] * len(user_ids))
-            cur.execute(
-                f"SELECT id, user_id, external_id, object_type, amount, currency, "
-                f"transaction_date, description, counterparty, status, raw_payload "
-                f"FROM stripe_transactions "
-                f"WHERE user_id IN ({placeholders}) "
-                f"ORDER BY transaction_date DESC LIMIT %s",
-                (*user_ids, limit),
-            )
-            return cur.fetchall()
-    finally:
-        conn.close()
-
-
-async def list_stripe_transactions(user_id: int, limit: int = 1000) -> list[dict]:
-    """List raw Stripe payloads stored in stripe_transactions (org-scoped).
-
-    ``raw_payload`` is the full Stripe object as received (charges, refunds,
-    transfers, payouts, disputes). Prefer unified list_transactions for
-    analytics; use this for raw-object debugging.
-    """
-    rows = await asyncio.to_thread(_read_stripe_transactions, user_id, limit)
-    return [jsonable(r) for r in rows]
-
-
-def _read_sync_status(user_id: int, source: str) -> dict | None:
-    resolve_org_scope(user_id)
-    row = _store_get_sync_status(source)
-    return jsonable(row) if row else None
-
-
-async def get_sync_status(user_id: int, source: str) -> dict | None:
-    """Return the latest sync-status entry for ``source`` (e.g. stripe).
-
-    Note: the sync_status table is keyed per source, not per user; ``user_id``
-    authorizes the caller (must belong to the org) but the status row is
-    shared, matching the current API behavior.
-    """
-    return await asyncio.to_thread(_read_sync_status, user_id, source)

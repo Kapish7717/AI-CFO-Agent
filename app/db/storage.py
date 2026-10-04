@@ -10,6 +10,54 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 BUCKET_NAME = "cfo-agent-files"
 
+# The HTTP fallback below exists for a specific failure mode: the Supabase SDK
+# tripping over TLS on some hosts. It is not a general-purpose retry, so it is
+# only worth paying for when the error looks like that. Previously *any* other
+# exception also fell through to it, which meant a 404-shaped or 403-shaped
+# error cost a full timeout before giving up.
+_FALLBACK_TIMEOUT = 10.0
+
+_MISSING_MARKERS = (
+    "not found",
+    "does not exist",
+    "no such",
+    "404",
+    "nosuchkey",
+    "nosuchobject",
+)
+
+_TRANSPORT_MARKERS = (
+    "ssl",
+    "certificate",
+    "wrong version",
+    "timed out",
+    "timeout",
+    "connection",
+    "eof occurred",
+    "connectionreset",
+    "connection aborted",
+    "network is unreachable",
+    "temporary failure in name resolution",
+)
+
+
+def _is_missing(exc: Exception) -> bool:
+    """True when the object genuinely is not there."""
+    if getattr(exc, "status_code", None) == 404:
+        return True
+    text = str(exc).lower()
+    return any(marker in text for marker in _MISSING_MARKERS)
+
+
+def _is_transport(exc: Exception) -> bool:
+    """True when the request plausibly failed below the HTTP layer."""
+    status = getattr(exc, "status_code", None)
+    if status is not None and 400 <= status < 500:
+        return False
+    text = str(exc).lower()
+    return any(marker in text for marker in _TRANSPORT_MARKERS)
+
+
 _supabase_client = None
 
 def get_storage_client() -> Client:
@@ -54,6 +102,7 @@ def upload_to_storage(local_path: str, remote_path: str) -> str:
         return local_path
 
     remote_path = remote_path.replace("\\", "/")
+    file_data = b""
     try:
         with open(local_path, "rb") as f:
             file_data = f.read()
@@ -68,6 +117,9 @@ def upload_to_storage(local_path: str, remote_path: str) -> str:
         logger.info(f"Successfully uploaded. Public URL: {public_url}")
         return public_url
     except Exception as e:
+        if not _is_transport(e):
+            logger.error(f"Upload of '{remote_path}' failed and is not retryable over HTTP: {e}")
+            return local_path
         logger.warning(f"SDK upload failed ({e}), trying HTTP fallback...")
         return _upload_via_http(client, local_path, remote_path, file_data)
 
@@ -85,7 +137,7 @@ def _upload_via_http(client, local_path: str, remote_path: str, file_data: bytes
             "x-upsert": "true",
         }
         import httpx
-        with httpx.Client(timeout=30) as http:
+        with httpx.Client(timeout=_FALLBACK_TIMEOUT) as http:
             resp = http.post(url, content=file_data, headers=headers)
             resp.raise_for_status()
         public_url = client.storage.from_(BUCKET_NAME).get_public_url(remote_path)
@@ -119,8 +171,11 @@ def download_from_storage(remote_path: str, local_path: str) -> bool:
         logger.info(f"Successfully downloaded to '{local_path}'.")
         return True
     except Exception as e:
-        if "The resource was not found" in str(e) or "Object not found" in str(e) or "404" in str(e):
+        if _is_missing(e):
             logger.info(f"File '{remote_path}' not found in Supabase Storage bucket (expected if not generated yet).")
+            return False
+        if not _is_transport(e):
+            logger.error(f"Download of '{remote_path}' failed and is not retryable over HTTP: {e}")
             return False
         logger.warning(f"SDK download failed ({e}), trying HTTP fallback...")
         return _download_via_http(client, remote_path, local_path)
@@ -135,7 +190,7 @@ def _download_via_http(client, remote_path: str, local_path: str) -> bool:
             return False
         import httpx
         os.makedirs(os.path.dirname(os.path.abspath(local_path)), exist_ok=True)
-        with httpx.Client(timeout=30, follow_redirects=True) as http:
+        with httpx.Client(timeout=_FALLBACK_TIMEOUT, follow_redirects=True) as http:
             resp = http.get(public_url)
             resp.raise_for_status()
             with open(local_path, "wb") as f:

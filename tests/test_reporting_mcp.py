@@ -70,8 +70,20 @@ def test_result_marks_success_and_failure():
 async def test_reporting_server_wraps_generate(monkeypatch):
     calls = {}
 
-    async def fake_generate(custom_instructions="", user_id=None):
-        calls["args"] = {"custom_instructions": custom_instructions, "user_id": user_id}
+    async def fake_generate(
+        custom_instructions="",
+        user_id=None,
+        start_date=None,
+        end_date=None,
+        report_months=None,
+    ):
+        calls["args"] = {
+            "custom_instructions": custom_instructions,
+            "user_id": user_id,
+            "start_date": start_date,
+            "end_date": end_date,
+            "report_months": report_months,
+        }
         return f"Success! PDF generated as report_{user_id}.pdf."
 
     monkeypatch.setattr(
@@ -82,7 +94,46 @@ async def test_reporting_server_wraps_generate(monkeypatch):
 
     assert result["success"] is True
     assert result["report_storage_path"] == "reports/executive_cfo_report_4.pdf"
-    assert calls["args"] == {"custom_instructions": "hi", "user_id": 4}
+    assert calls["args"] == {
+        "custom_instructions": "hi",
+        "user_id": 4,
+        "start_date": None,
+        "end_date": None,
+        "report_months": None,
+    }
+
+
+@pytest.mark.anyio
+async def test_reporting_server_forwards_the_report_window(monkeypatch):
+    # The window has to reach the generator, otherwise the user's chosen period
+    # is silently ignored and the PDF always covers 12 months.
+    calls = {}
+
+    async def fake_generate(custom_instructions="", user_id=None, start_date=None,
+                            end_date=None, report_months=None):
+        calls["args"] = {
+            "start_date": start_date,
+            "end_date": end_date,
+            "report_months": report_months,
+        }
+        return "Success! PDF generated."
+
+    monkeypatch.setattr(
+        "app.agents.mcp_server.generate_cfo_pdf_report", fake_generate, raising=True
+    )
+
+    await server.generate_cfo_pdf_report(
+        user_id=4,
+        start_date="2026-07-01",
+        end_date="2026-09-15",
+        report_months=3,
+    )
+
+    assert calls["args"] == {
+        "start_date": "2026-07-01",
+        "end_date": "2026-09-15",
+        "report_months": 3,
+    }
 
 
 @pytest.mark.anyio

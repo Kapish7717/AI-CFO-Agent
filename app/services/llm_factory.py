@@ -11,7 +11,28 @@ keeps provider logic isolated.
 from __future__ import annotations
 
 import asyncio
+import os
 from typing import Any
+
+_DEFAULT_REQUEST_TIMEOUT = 120.0
+_DEFAULT_MAX_RETRIES = 1
+
+def _bounded(init: dict, kwargs: dict, keys: tuple[str, ...] = ("request_timeout", "max_retries")) -> dict:
+	"""Apply bounded-network defaults. Explicit kwargs still win.
+
+	``keys`` names the client options this provider's wrapper actually accepts.
+	ChatGoogleGenerativeAI takes ``request_timeout`` but has no ``max_retries``,
+	so handing it one would raise instead of bounding anything.
+	"""
+	if "request_timeout" in keys:
+		init.setdefault(
+			"request_timeout", float(os.getenv("LLM_REQUEST_TIMEOUT", _DEFAULT_REQUEST_TIMEOUT))
+		)
+	if "max_retries" in keys:
+		init.setdefault("max_retries", int(os.getenv("LLM_MAX_RETRIES", _DEFAULT_MAX_RETRIES)))
+	init.update(kwargs)
+	return init
+
 
 # Try to import popular langchain chat model wrappers. If they're not
 # available the factory will fall back to a simple mock implementation.
@@ -161,7 +182,7 @@ def create_llm(provider: str, model: str | None = None, api_key: str | None = No
 		if api_key:
 			init["openai_api_key"] = api_key
 		init.update(kwargs)
-		return ChatOpenAI(**init)
+		return ChatOpenAI(**_bounded(init,kwargs))
 
 	if provider == "groq":
 		if ChatGroq is None:
@@ -172,7 +193,7 @@ def create_llm(provider: str, model: str | None = None, api_key: str | None = No
 		if api_key:
 			init["groq_api_key"] = api_key
 		init.update(kwargs)
-		return ChatGroq(**init)
+		return ChatGroq(**_bounded(init, kwargs))
 
 	if provider in ("gemini", "google", "google_genai"):
 		if ChatGoogleGenerativeAI is None:
@@ -181,7 +202,9 @@ def create_llm(provider: str, model: str | None = None, api_key: str | None = No
 		if api_key:
 			init["google_api_key"] = api_key
 		init.update(kwargs)
-		return ChatGoogleGenerativeAI(**init)
+		# This branch was previously unbounded, so a hung Gemini call had no
+		# deadline at all. It accepts request_timeout but not max_retries.
+		return ChatGoogleGenerativeAI(**_bounded(init, kwargs, keys=("request_timeout",)))
 
 	if provider in ("anthropic",):
 		if ChatAnthropic is None:
@@ -189,8 +212,15 @@ def create_llm(provider: str, model: str | None = None, api_key: str | None = No
 		init = {"model": model} if model else {}
 		if api_key:
 			init["api_key"] = api_key
+		# ChatAnthropic spells the same knob default_request_timeout, so accept the
+		# common spelling from callers and translate it rather than passing an
+		# argument this wrapper does not recognise.
+		if "request_timeout" in kwargs:
+			kwargs = {k: v for k, v in kwargs.items() if k != "request_timeout"}
+			kwargs.setdefault("default_request_timeout",
+				float(os.getenv("LLM_REQUEST_TIMEOUT", _DEFAULT_REQUEST_TIMEOUT)))
 		init.update(kwargs)
-		return ChatAnthropic(**init)
+		return ChatAnthropic(**_bounded(init, kwargs, keys=("default_request_timeout",)))
 
 	if provider == "openrouter":
 		if ChatOpenAI is None:
@@ -202,7 +232,7 @@ def create_llm(provider: str, model: str | None = None, api_key: str | None = No
 		if api_key:
 			init["openai_api_key"] = api_key
 		init.update(kwargs)
-		return ChatOpenAI(**init)
+		return ChatOpenAI(**_bounded(init,kwargs))
 
 	raise NotImplementedError(f"LLM provider '{provider}' is not implemented in llm_factory")
 
@@ -235,6 +265,59 @@ def _extract_text(value: Any) -> str:
 	if hasattr(value, "content"):  # fallback for some response objects
 		return _extract_text(value.content)
 	return str(value)
+
+
+async def generate_text_stream(model: Any, prompt: str):
+    """Yield text chunks from a LangChain-like chat model using streaming.
+
+    Tries ``model.astream()`` first, then falls back to ``model.stream()``
+    run in a thread. If the model doesn't support streaming at all, yields
+    the full result as a single chunk.
+    """
+    import random
+
+    MAX_RETRIES = 3
+
+    async def _stream_once():
+        if hasattr(model, "astream"):
+            try:
+                async for chunk in model.astream([{"role": "user", "content": prompt}]):
+                    yield _extract_text(chunk)
+                return
+            except TypeError:
+                async for chunk in model.astream(prompt):
+                    yield _extract_text(chunk)
+                return
+
+        if hasattr(model, "stream"):
+            def _sync_stream():
+                return list(model.stream([{"role": "user", "content": prompt}]))
+            try:
+                chunks = await asyncio.to_thread(_sync_stream)
+            except TypeError:
+                def _sync_stream2():
+                    return list(model.stream(prompt))
+                chunks = await asyncio.to_thread(_sync_stream2)
+            for chunk in chunks:
+                yield _extract_text(chunk)
+            return
+
+        # No streaming support — yield full result as one chunk
+        full = await generate_text(model, prompt)
+        yield full
+
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            async for chunk in _stream_once():
+                yield chunk
+            return
+        except Exception as e:
+            if attempt >= MAX_RETRIES:
+                yield f"[llm error] {e}"
+                return
+            await asyncio.sleep(min(0.5 * (2 ** (attempt - 1)), 4) + random.uniform(0, 0.2))
 
 
 async def generate_text(model: Any, prompt: str) -> str:
@@ -295,5 +378,5 @@ async def generate_text(model: Any, prompt: str) -> str:
 			await asyncio.sleep(min(0.5 * (2 ** (attempt - 1)), 4) + random.uniform(0, 0.2))
 
 
-__all__ = ["create_llm", "create_llm_with_fallback", "generate_text"]
+__all__ = ["create_llm", "create_llm_with_fallback", "generate_text", "generate_text_stream"]
 

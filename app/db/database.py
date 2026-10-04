@@ -295,7 +295,9 @@ def init_db():
                 stripe_secret_key VARCHAR(255) NULL,
                 stripe_account_id VARCHAR(255) NULL,
                 report_email VARCHAR(255) NULL,
-                report_schedule VARCHAR(50) NULL
+                report_schedule VARCHAR(50) NULL,
+                report_months SMALLINT NULL,
+                report_last_run VARCHAR(20) NULL
             );
         """)
 
@@ -312,6 +314,8 @@ def init_db():
             ("stripe_account_id", "VARCHAR(255)"),
             ("report_email", "VARCHAR(255)"),
             ("report_schedule", "VARCHAR(50)"),
+            ("report_months", "SMALLINT"),
+            ("report_last_run", "VARCHAR(20)"),
         ):
             try:
                 cur.execute(f"ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS {_col} {_dtype} NULL;")
@@ -615,6 +619,58 @@ def get_users_by_domain(domain: str) -> list[dict]:
         conn.close()
 
 
+def get_user_domain(user_id: int) -> str | None:
+    """Return the company_domain for a user, or None."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT company_domain FROM users WHERE id = %s", (user_id,))
+            row = cur.fetchone()
+            return row["company_domain"] if row else None
+    finally:
+        conn.close()
+
+
+def get_domain_user_ids(user_id: int) -> list[int]:
+    """Return all user IDs in the same company domain as *user_id*.
+
+    If the user has no domain, returns only ``[user_id]``.
+    This is the single entry-point for company-wide data sharing:
+    all data queries should filter by ``WHERE user_id IN (get_domain_user_ids(uid))``.
+    """
+    domain = get_user_domain(user_id)
+    if not domain:
+        return [user_id]
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id FROM users WHERE company_domain = %s",
+                (domain,),
+            )
+            return [row["id"] for row in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def get_domain_admin_id(user_id: int) -> int | None:
+    """Return the admin user_id for the same domain, or None if no admin found."""
+    domain = get_user_domain(user_id)
+    if not domain:
+        return None
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id FROM users WHERE company_domain = %s AND role = 'admin' ORDER BY created_at LIMIT 1",
+                (domain,),
+            )
+            row = cur.fetchone()
+            return row["id"] if row else None
+    finally:
+        conn.close()
+
+
 def update_user_role(user_id: int, role: str) -> bool:
     """Update a user's role (admin or user)."""
     if role not in ('admin', 'user'):
@@ -689,7 +745,9 @@ def get_user_settings(user_id: int):
         "fallback_api_key": None,
         "stripe_secret_key": None,
         "report_email": None,
-        "report_schedule": None
+        "report_schedule": None,
+        "report_months": None,
+        "report_last_run": None
     }
     conn = get_connection()
     try:
@@ -710,6 +768,22 @@ def get_user_settings(user_id: int):
                 for k, v in default_settings.items():
                     if k not in settings or settings[k] is None:
                         settings[k] = v
+
+                # If this user has no uploaded data files, fall back to the
+                # admin's settings in the same company domain so all users
+                # in the domain can see the same data.
+                file_keys = ("expense_file_path", "expense_file_name",
+                             "revenue_file_path", "revenue_file_name")
+                needs_fallback = any(not settings.get(k) for k in file_keys)
+                if needs_fallback:
+                    admin_id = get_domain_admin_id(user_id)
+                    if admin_id and admin_id != user_id:
+                        cur.execute("SELECT * FROM user_settings WHERE user_id = %s", (admin_id,))
+                        admin_settings = cur.fetchone()
+                        if admin_settings and isinstance(admin_settings, dict):
+                            for k in file_keys:
+                                if not settings.get(k) and admin_settings.get(k):
+                                    settings[k] = admin_settings[k]
                 return settings
             return default_settings
     except Exception as e:
@@ -735,7 +809,9 @@ def update_user_settings(user_id: int, updates: dict):
                 'llm_fallback_provider', 'llm_fallback_model',
                 'api_key', 'fallback_api_key',
                 'stripe_secret_key',
-                'report_email', 'report_schedule'
+                'report_email', 'report_schedule',
+                'report_months',
+                'report_last_run'
             }
             fields = []
             vals = []
@@ -797,20 +873,21 @@ def delete_user_google_token(user_id: int):
         conn.close()
 
 # Chat Logs Helpers
-def get_user_chat_history(user_id: int, limit: int = 10):
+def get_user_chat_history(user_id: int, limit: int = 50):
     conn = get_connection()
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT sender, message_text as text, TO_CHAR(timestamp, 'HH24:MI:SS') as timestamp
+                SELECT sender, message_text as text, id,
+                       TO_CHAR(timestamp, 'YYYY-MM-DD"T"HH24:MI:SS') as timestamp
                 FROM (
-                    SELECT sender, message_text, timestamp
+                    SELECT sender, message_text, timestamp, id
                     FROM user_chat_messages
                     WHERE user_id = %s
                     ORDER BY timestamp DESC
                     LIMIT %s
                 ) recent
-                ORDER BY timestamp ASC
+                ORDER BY timestamp ASC, id ASC
             """, (user_id, limit))
             return cur.fetchall()
     finally:
@@ -1037,8 +1114,53 @@ def insert_user_transactions(user_id: int, rows: list[dict]):
     finally:
         conn.close()
 
-def get_user_transactions(user_id: int) -> list[dict]:
+def get_max_transaction_date(user_id: int) -> str | None:
+    """Return the newest ``transaction_date`` the user has, as an ISO string.
+
+    The report window is anchored on this rather than on today, so an account
+    that last synced months ago still shows a full period that ends where its
+    data does. Returns None when the user has no transactions yet.
+    """
+    user_ids = get_domain_user_ids(user_id)
+    if not user_ids:
+        return None
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT MAX(transaction_date) AS max_date
+                FROM unified_transactions
+                WHERE user_id IN ({', '.join(['%s'] * len(user_ids))})
+                """,
+                tuple(user_ids),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            # This module reads through a dict cursor, so index by column name.
+            value = row.get("max_date") if isinstance(row, dict) else row[0]
+            if value is None:
+                return None
+            return value.date().isoformat() if hasattr(value, "date") else str(value)
+    finally:
+        conn.close()
+
+
+def get_user_transactions(
+    user_id: int,
+    user_ids: list[int] | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> list[dict]:
     """Retrieves all transactions from unified_transactions, sorted by date.
+
+    When *user_ids* is provided (from ``get_domain_user_ids``), returns data
+    for all those users so the whole company sees the same transactions.
+
+    *start_date* / *end_date* are optional ISO bounds applied to
+    ``transaction_date``; the report window is passed in here so the PDF and
+    the anomaly pass cover the same period.
 
     Maps unified_transactions columns to the legacy format expected by
     dashboard, reports, and other callers:
@@ -1048,16 +1170,26 @@ def get_user_transactions(user_id: int) -> list[dict]:
         amount -> Amount
         category -> Category
     """
+    if user_ids is None:
+        user_ids = get_domain_user_ids(user_id)
+    where = [f"user_id IN ({', '.join(['%s'] * len(user_ids))})"]
+    params: list = list(user_ids)
+    if start_date:
+        where.append("transaction_date >= %s")
+        params.append(start_date)
+    if end_date:
+        where.append("transaction_date <= %s")
+        params.append(end_date)
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute("""
-                SELECT id, user_id, transaction_date, category, amount,
-                       counterparty, transaction_type
-                FROM unified_transactions
-                WHERE user_id = %s
+            cur.execute(f"""
+SELECT id, user_id, transaction_date, category, amount,
+counterparty, transaction_type, source
+FROM unified_transactions
+                WHERE {' AND '.join(where)}
                 ORDER BY transaction_date ASC
-            """, (user_id,))
+            """, tuple(params))
             rows = cur.fetchall()
 
             sys.stderr.write(f"[DB] get_user_transactions: found {len(rows)} rows from unified_transactions\n")
@@ -1095,6 +1227,7 @@ def get_user_transactions(user_id: int) -> list[dict]:
                     'Amount': amt_val,
                     'Entity': d.get('counterparty'),
                     'Type': tx_type,
+                    'Source': d.get('source'),
                     'Severity': 'Normal',
                     'Is_Budget_Breach': False,
                     'Is_Mom_Anomaly': False,

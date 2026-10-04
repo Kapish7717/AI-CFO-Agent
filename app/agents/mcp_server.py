@@ -9,6 +9,7 @@ from email.message import EmailMessage
 import pandas as pd
 from mcp.server.fastmcp import FastMCP
 
+from app.graph.period import DEFAULT_MONTHS, normalize_months, resolve_window
 from app.integrations.google_auth import (
     exchange_code_for_token,
     get_auth_url,
@@ -362,20 +363,41 @@ async def detect_financial_anomalies(budget_limits: dict | None = None, user_id:
         return f"Analysis failed: {e}"
 
 @mcp.tool()
-async def generate_cfo_pdf_report(custom_instructions: str = "", user_id: int = None) -> str:
+async def generate_cfo_pdf_report(
+    custom_instructions: str = "",
+    user_id: int = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    report_months: int | None = None,
+) -> str:
     """
     Generates a professional PDF report from the analyzed financial data.
     Call this immediately after detect_financial_anomalies.
     custom_instructions: Optional user requests for the report content.
+    start_date / end_date: inclusive ISO bounds on the report period, resolved
+        once by the supervisor so the report and the anomaly pass agree.
+    report_months: fallback period length when the bounds are not supplied.
     """
     _, report_file, breaches_file = get_user_state_paths(user_id)
-    
+
     # Try downloading budget breaches from Supabase Storage
     from app.db.storage import download_from_storage
-    download_from_storage(f"breaches/budget_breaches_{user_id}.json", breaches_file)
-    
+    if not os.path.exists(breaches_file):
+        await asyncio.to_thread(
+            download_from_storage, f"breaches/budget_breaches_{user_id}.json", breaches_file
+        )
+
     from app.db.database import get_user_transactions
-    rows = await asyncio.to_thread(get_user_transactions, user_id)
+    if not (start_date and end_date):
+        from app.db.database import get_max_transaction_date
+        anchor = await asyncio.to_thread(get_max_transaction_date, user_id) if user_id else None
+        start_date, end_date = resolve_window(normalize_months(report_months), anchor)
+        if report_months is None:
+            report_months = normalize_months(DEFAULT_MONTHS)
+    report_months = normalize_months(report_months)
+    rows = await asyncio.to_thread(
+        get_user_transactions, user_id, None, start_date, end_date
+    )
     
     sys.stderr.write(f"[MCP DEBUG] ENTERING generate_cfo_pdf_report (User: {user_id})\n")
     if not rows:
@@ -399,15 +421,18 @@ async def generate_cfo_pdf_report(custom_instructions: str = "", user_id: int = 
         report_gen = ReportGenerator(df, output_path=report_file, 
                                      custom_instructions=custom_instructions, 
                                      breaches_file=breaches_file,
-                                     llm_config=llm_config)
+                                     llm_config=llm_config,
+                                     report_months=report_months)
         sys.stderr.write("[MCP DEBUG] Calling generate_pdf...\n")
         await asyncio.to_thread(report_gen.generate_pdf)
         sys.stderr.write("[MCP DEBUG] generate_pdf COMPLETED. Syncing to Cloud Storage...\n")
         
         # Upload report to Supabase Storage
         from app.db.storage import upload_to_storage
-        upload_to_storage(report_file, f"reports/executive_cfo_report_{user_id}.pdf")
-        
+        await asyncio.to_thread(
+            upload_to_storage, report_file, f"reports/executive_cfo_report_{user_id}.pdf"
+        )
+
         return f"Success! PDF generated as {report_file}."
     except Exception as e:
         return f"Failed: {e}"
@@ -421,22 +446,32 @@ async def send_email_report(to_email: str, subject: str, body: str, user_id: int
     body: The main content of the email.
     """
     _, report_file, breaches_file = get_user_state_paths(user_id)
-    
-    # Try downloading the PDF report and breaches file from Supabase Storage
+
+    # The report was uploaded moments ago by generate_cfo_pdf_report and has not
+    # left this working directory since, so re-fetching it over the network only
+    # added latency (and, when Supabase's TLS misbehaved, a fallback timeout).
+    # Fall back to a download only when the local copy is genuinely absent.
     from app.db.storage import download_from_storage
-    download_from_storage(f"reports/executive_cfo_report_{user_id}.pdf", report_file)
-    download_from_storage(f"breaches/budget_breaches_{user_id}.json", breaches_file)
-    
+    if not os.path.exists(report_file):
+        await asyncio.to_thread(
+            download_from_storage, f"reports/executive_cfo_report_{user_id}.pdf", report_file
+        )
+    if not os.path.exists(breaches_file):
+        await asyncio.to_thread(
+            download_from_storage, f"breaches/budget_breaches_{user_id}.json", breaches_file
+        )
+
     try:
-        service = get_gmail_service(user_id=user_id)
-        
+        # Building the Gmail service can trigger a blocking token refresh.
+        service = await asyncio.to_thread(get_gmail_service, user_id=user_id)
+
         budget_warning = ""
         if os.path.exists(breaches_file):
             try:
                 with open(breaches_file) as f:
                     breaches = json.load(f)
                 if breaches:
-                    budget_warning = "\n\n⚠️ URGENT: BUDGET BREACHES DETECTED\n"
+                    budget_warning = "\n\nURGENT: BUDGET BREACHES DETECTED\n"
                     for b in breaches:
                         budget_warning += f"- {b['Category']}: Spent ${b['Actual']:,.2f} (Limit: ${b['Limit']:,.2f}) | Over by ${b['Overspend']:,.2f} ({b['Percent_Over']})\n"
             except Exception as breach_err:
@@ -449,7 +484,9 @@ async def send_email_report(to_email: str, subject: str, body: str, user_id: int
 
         # Use the authenticated Gmail account as the sender when possible.
         try:
-            profile = service.users().getProfile(userId="me").execute()
+            profile = await asyncio.to_thread(
+                lambda: service.users().getProfile(userId="me").execute()
+            )
             sender_email = profile.get("emailAddress") or "me"
             message["From"] = sender_email
             sys.stderr.write(f"[EMAIL DEBUG] Sending from authenticated Gmail account: {sender_email}\n")
@@ -459,10 +496,15 @@ async def send_email_report(to_email: str, subject: str, body: str, user_id: int
 
         attachment_path = report_file
         if os.path.exists(attachment_path):
-            type_subtype, _ = mimetypes.guess_type(attachment_path)
-            maintype, subtype = (type_subtype or "application/pdf").split("/")
+            guessed = mimetypes.guess_type(attachment_path)[0] or "application/pdf"
+            maintype, _, subtype = guessed.partition("/")
             with open(attachment_path, "rb") as fp:
-                message.add_attachment(fp.read(), maintype=maintype, subtype=subtype, filename=os.path.basename(attachment_path))
+                message.add_attachment(
+                    fp.read(),
+                    maintype=maintype,
+                    subtype=subtype or "pdf",
+                    filename=os.path.basename(attachment_path),
+                )
             sys.stderr.write(f"\n[ATTACHMENT]: Attached {attachment_path} to email.\n")
         else:
             sys.stderr.write(f"\n[EMAIL BLOCKED]: PDF report '{attachment_path}' not found. Aborting email.\n")
@@ -473,14 +515,17 @@ async def send_email_report(to_email: str, subject: str, body: str, user_id: int
 
         sys.stderr.write(f"\n[EMAIL TRIGGERED]: Sending email via Gmail to {to_email} | Subject: {subject}\n")
         try:
-            send_message = await asyncio.to_thread(service.users().messages().send(userId="me", body=create_message).execute)
+            send_message = await asyncio.to_thread(
+                service.users().messages().send(userId="me", body=create_message).execute,
+                num_retries=3,
+            )
             sys.stderr.write(f"[MCP] Tool 'send_email_report' completed successfully. Gmail response: {send_message}\n")
             message_id = send_message.get("id")
             return f"Success! Real email sent to {to_email}. Gmail Message ID: {message_id}"
         except Exception as send_err:
             sys.stderr.write(f"[EMAIL ERROR] Failed to send Gmail message: {send_err}\n")
             return f"Failed to send email: {send_err}"
-        
+
     except Exception as e:
         sys.stderr.write(f"\n[EMAIL ERROR]: {e}\n")
         return f"Failed to send email: {e}"

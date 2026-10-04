@@ -13,8 +13,22 @@
 
 from __future__ import annotations
 
+# This server is a separate stdio process, so .env has to be loaded here rather
+# than inherited: running it directly (mcp dev, the Inspector) has no parent
+# that exported the environment.
+from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 
+from app.agents import mcp_server
+
+load_dotenv()
+
+# The legacy reporting stack is imported here, at module load, rather than inside
+# the tool bodies. FastMCP runs a tool on the server's single event loop, and
+# importing that stack during a request occupies the loop for the duration, so
+# the server never gets to answer. At startup it settles before serving starts.
+# The module is imported rather than its names so attribute lookups stay late
+# bound, which is what the tests patch.
 mcp = FastMCP("reporting-mcp")
 
 
@@ -31,7 +45,13 @@ def _result(detail, **extra) -> dict:
 
 
 @mcp.tool()
-async def generate_cfo_pdf_report(user_id: int, custom_instructions: str = "") -> dict:
+async def generate_cfo_pdf_report(
+    user_id: int,
+    custom_instructions: str = "",
+    start_date: str | None = None,
+    end_date: str | None = None,
+    report_months: int | None = None,
+) -> dict:
     """Generate the executive CFO PDF report for one user.
 
     Reads the user's analyzed transactions, renders the report with the user's
@@ -40,10 +60,18 @@ async def generate_cfo_pdf_report(user_id: int, custom_instructions: str = "") -
 
     ``custom_instructions`` steers the written narrative; the reporting node
     passes a deterministic summary of the anomalies it detected.
-    """
-    from app.agents.mcp_server import generate_cfo_pdf_report as _generate
 
-    detail = await _generate(custom_instructions=custom_instructions, user_id=user_id)
+    ``start_date`` / ``end_date`` are the inclusive ISO bounds of the period to
+    report on, resolved once by the supervisor. When they are omitted the
+    period falls back to the user's saved preference, or ``report_months``.
+    """
+    detail = await mcp_server.generate_cfo_pdf_report(
+        custom_instructions=custom_instructions,
+        user_id=user_id,
+        start_date=start_date,
+        end_date=end_date,
+        report_months=report_months,
+    )
     return _result(detail, report_storage_path=f"reports/executive_cfo_report_{user_id}.pdf")
 
 
@@ -54,9 +82,7 @@ async def send_email_report(user_id: int, to_email: str, subject: str, body: str
     The PDF must already exist (generate_cfo_pdf_report first); it is attached
     automatically, along with any budget-breach summary.
     """
-    from app.agents.mcp_server import send_email_report as _send
-
-    detail = await _send(to_email=to_email, subject=subject, body=body, user_id=user_id)
+    detail = await mcp_server.send_email_report(to_email=to_email, subject=subject, body=body, user_id=user_id)
     return _result(detail, to_email=to_email)
 
 
@@ -70,9 +96,7 @@ async def schedule_budget_review(
     and ``end_time`` are ISO 8601 local date-times without a timezone offset
     (e.g. '2026-05-10T10:00:00'); the event is created in Asia/Kolkata.
     """
-    from app.agents.mcp_server import schedule_meeting as _schedule
-
-    detail = await _schedule(
+    detail = await mcp_server.schedule_meeting(
         attendees=attendees, start_time=start_time, end_time=end_time, user_id=user_id
     )
     return _result(detail, attendees=attendees, start_time=start_time)

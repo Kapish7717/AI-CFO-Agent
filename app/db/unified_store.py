@@ -181,6 +181,31 @@ def _pick(row: dict, *keys):
     return None
 
 
+def _canonical_timestamp(value) -> str:
+    """Reduce any date-ish value to a stable string for hashing.
+
+    Keeps the time when one is present, so same-day transactions stay distinct,
+    while still giving pandas Timestamps, datetimes and ISO strings the same
+    answer for the same instant. Sub-second precision is dropped because it is
+    almost never real and is a common source of spurious duplicates.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return ""
+        try:
+            value = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return text
+    if isinstance(value, datetime):
+        if value.tzinfo is not None:
+            value = value.astimezone(timezone.utc).replace(tzinfo=None)
+        return value.replace(microsecond=0).isoformat()
+    return str(value)
+
+
 def _excel_record(user_id: int, row: dict) -> dict:
     """Maps a canonical transactions-table row (Date/Category/Amount/Entity/Type)
     into the unified schema with source='excel'.
@@ -195,11 +220,13 @@ def _excel_record(user_id: int, row: dict) -> dict:
     else:
         transaction_type, direction = "expense", "outflow"
 
-    # Normalize the date to its date part so the same transaction gets the same
-    # external_id whether it came from a dataframe (pandas Timestamp) or the DB
-    # (datetime), preventing duplicate mirrors.
+    # Canonicalize the date so the same transaction gets the same external_id
+    # whether it came from a dataframe (pandas Timestamp) or the DB (datetime),
+    # preventing duplicate mirrors. The time is part of the key on purpose: two
+    # genuinely different charges on the same day, same category, same
+    # counterparty and same amount would otherwise collapse into one row.
     raw_date = _pick(row, "Date", "date", "transaction_date")
-    date_str = str(raw_date)[:10] if raw_date is not None else ""
+    date_str = _canonical_timestamp(raw_date)
 
     # Canonicalize the amount too: floats ("70258.0") and DB Decimals
     # ("70258.00") must hash identically, otherwise the same row gets a

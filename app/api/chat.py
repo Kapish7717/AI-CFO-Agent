@@ -1,7 +1,10 @@
 """Chat API endpoints.
 
-The interactive chat queries the database via Jina RAG (Text-to-SQL) — this is
-fully separate from the CFO reporting agent in ``app/api/agent.py``.
+Questions are answered by the analyst subgraph of the CFO graph
+(``app/graph/supervisor.py``): this router hands the supervisor a ``chat``
+trigger and reads the answer back off state, so chat goes through the same
+routing, org scoping and MCP tooling as the reporting run instead of calling
+the RAG service directly.
 """
 
 import asyncio
@@ -23,6 +26,20 @@ from app.db.database import (
 logger = logging.getLogger("cfo.api.chat")
 
 router = APIRouter()
+
+_ASK_HINT = "Please type a question about your financial data."
+
+_SSE_HEADERS = {
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive",
+    # Without this nginx buffers the whole response and the stream arrives at once.
+    "X-Accel-Buffering": "no",
+}
+
+
+def _chat_state(user_id: int, question: str) -> dict:
+    """The supervisor input that routes to the analyst subgraph."""
+    return {"user_id": user_id, "trigger": "chat", "question": question}
 
 class ChatHistoryResponse(BaseModel):
     sender: str
@@ -46,60 +63,84 @@ def clear_chat_history(user_id: int = Depends(get_active_user_id)):
 class DataQueryRequest(BaseModel):
     question: str
 
-# The frontend uses /api/chat/data-query/stream (SSE); this non-streaming
-# endpoint remains for API compatibility and shares the same supabase-mcp
-# backed retrieval.
 @router.post("/api/chat/data-query")
 async def chat_data_query(req: DataQueryRequest, user_id: int = Depends(get_active_user_id)):
-    """Answer a question about the user's uploaded financial data via Jina RAG.
-    Querying the database is fully separate from the CFO reporting agent.
+    """Answer a question about the user's uploaded financial data via the graph.
+
+    The ``chat`` trigger routes to the analyst subgraph, which reads through the
+    supabase-mcp query tools, so the answer is scoped to the caller's org.
     """
     if not req.question or not req.question.strip():
-        return {"answer": "Please type a question about your financial data.", "success": True}
-    from app.services.rag import answer_with_rag
-    answer = await answer_with_rag(user_id=user_id, question=req.question.strip())
-    # Persist the Q&A to chat history so it survives a page refresh.
+        return {"answer": _ASK_HINT, "success": True}
+
+    from app.graph.supervisor import graph
+
+    result = await graph.ainvoke(_chat_state(user_id, req.question.strip()))
+    analyst = result.get("analyst") or {}
+    answer = analyst.get("answer") or analyst.get("error") or ""
+    success = bool(analyst.get("success"))
+    if not success:
+        logger.warning("Analyst run failed for user %s: %s", user_id, analyst.get("error"))
+
+    await _persist_exchange(user_id, req.question.strip(), answer)
+    return {"answer": answer, "success": success}
+
+
+async def _persist_exchange(user_id: int, question: str, answer: str) -> None:
+    """Save the Q&A so it survives a page refresh. Never fails the request."""
     try:
-        await asyncio.to_thread(save_user_chat_message, user_id, "user", req.question.strip())
+        await asyncio.to_thread(save_user_chat_message, user_id, "user", question)
         await asyncio.to_thread(save_user_chat_message, user_id, "agent", answer)
     except Exception as e:
         logger.warning("Could not persist chat for user %s: %s", user_id, e)
-    return {"answer": answer, "success": True}
+
 
 @router.post("/api/chat/data-query/stream")
 async def chat_data_query_stream(req: DataQueryRequest, user_id: int = Depends(get_active_user_id)):
-    """Stream the RAG answer as SSE frames: ``data: {"chunk": ...}`` lines.
+    """Stream the analyst's answer as SSE frames: ``data: {"chunk": ...}`` lines.
 
-    Canonical chat entry point: the frontend consumes this endpoint, and
-    retrieval runs through the supabase-mcp query tools so the answer is
-    scoped to the caller's org.
+    Canonical chat entry point: the frontend consumes this endpoint. The graph is
+    streamed with stream_mode="custom" so the analyst node's chunks arrive as
+    they are produced, and with "values" alongside it so the final state is read
+    back off the graph rather than reassembled here.
     """
     from fastapi.responses import StreamingResponse
 
-    from app.services.rag import answer_with_rag_stream
+    question = (req.question or "").strip()
+    if not question:
+
+        async def hint():
+            yield f"data: {json.dumps({'chunk': _ASK_HINT})}\n\n"
+            yield f"data: {json.dumps({'done': True, 'answer': _ASK_HINT})}\n\n"
+
+        return StreamingResponse(hint(), media_type="text/event-stream", headers=_SSE_HEADERS)
+
+    from app.graph.supervisor import graph
 
     async def event_generator():
         full_answer = ""
-        async for chunk in answer_with_rag_stream(user_id=user_id, question=req.question.strip()):
-            full_answer += chunk
-            yield f"data: {json.dumps({'chunk': chunk})}\n\n"
-        # Persist BEFORE sending done so history is available when the client refetches.
+        final_state: dict = {}
         try:
-            await asyncio.to_thread(save_user_chat_message, user_id, "user", req.question.strip())
-            await asyncio.to_thread(save_user_chat_message, user_id, "agent", full_answer)
+            async for mode, chunk in graph.astream(
+                _chat_state(user_id, question), stream_mode=["custom", "values"]
+            ):
+                if mode == "custom":
+                    if isinstance(chunk, str) and chunk:
+                        full_answer += chunk
+                        yield f"data: {json.dumps({'chunk': chunk})}\n\n"
+                elif mode == "values" and isinstance(chunk, dict):
+                    final_state = chunk
         except Exception as e:
-            logger.warning("Could not persist chat for user %s: %s", user_id, e)
-        yield f"data: {json.dumps({'done': True, 'answer': full_answer})}\n\n"
+            logger.error("Chat stream failed for user %s: %s", user_id, e, exc_info=True)
+            full_answer = f"Data query failed: {e}"
+            yield f"data: {json.dumps({'chunk': full_answer})}\n\n"
 
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
+        answer = (final_state.get("analyst") or {}).get("answer") or full_answer
+        await _persist_exchange(user_id, question, answer)
+        yield f"data: {json.dumps({'done': True, 'answer': answer})}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream", headers=_SSE_HEADERS)
+
 
 class TestRagRequest(BaseModel):
     question : str

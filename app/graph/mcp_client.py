@@ -1,6 +1,10 @@
-"""MCP clients for the pipeline graph — binds stripe-mcp + supabase-mcp +
-reporting-mcp tools via langchain-mcp-adapters (stdio transport, in-process
-subprocesses)."""
+"""MCP clients for the pipeline graph — binds supabase-mcp + reporting-mcp tools
+via langchain-mcp-adapters (stdio transport, in-process subprocesses).
+
+There is no Stripe fetch server here: Stripe data reaches unified_transactions
+through the 60s sync loop and the webhook (app/main.py, app/services/stripe_sync.py),
+so a run reads what is already stored and never re-fetches.
+"""
 
 import os
 import sys
@@ -8,12 +12,6 @@ import sys
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
 MCP_SERVERS = {
-    "stripe": {
-        "command": sys.executable,
-        "args": ["-m", "app.mcp.stripe.server"],
-        "transport": "stdio",
-        "env": os.environ.copy(),
-    },
     "supabase": {
         "command": sys.executable,
         "args": ["-m", "app.mcp.supabase.server"],
@@ -33,9 +31,9 @@ _tools = None
 
 
 async def get_pipeline_tools():
-    """Return the combined stripe-mcp + supabase-mcp tools, cached after the
-    first call (mirrors ``app/agents/cfo_agent.py``). Returns [] if the MCP
-    connection fails so nodes degrade to explicit error results."""
+    """Return the combined supabase-mcp + reporting-mcp tools, cached after the
+    first call. Returns [] if the MCP connection fails so nodes degrade to
+    explicit error results."""
     global _client, _tools
     if _tools is not None:
         return _tools

@@ -6,12 +6,13 @@ import asyncio
 import json
 import sys
 
-from app.graph.pipeline import graph
+from app.graph.supervisor import graph
 
 
 async def main(user_id: int) -> None:
     result = await graph.ainvoke({"user_id": user_id, "trigger": "new_data"})
-    print(json.dumps(result.get("sync_result"), indent=2, default=str))
+    print(json.dumps(result.get("anomaly_result"), indent=2, default=str))
+    print(json.dumps(result.get("report"), indent=2, default=str))
 
 
 if __name__ == "__main__":

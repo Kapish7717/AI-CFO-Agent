@@ -161,9 +161,6 @@ async def test_graph_routes_to_reporting_when_flagged(monkeypatch):
     """
     seen: dict = {}
 
-    async def stub_ingest(state):
-        return {"source": "stripe", "sync_result": {"success": True, "record_count": 1}}
-
     async def stub_anomaly(state):
         return {
             "anomaly_flags": ["zscore"],
@@ -175,7 +172,6 @@ async def test_graph_routes_to_reporting_when_flagged(monkeypatch):
         seen["ran"] = True
         return {"report": {"success": True, "generated": True, "stub": True}}
 
-    monkeypatch.setattr(pipeline, "stripe_ingestion_node", stub_ingest)
     monkeypatch.setattr(pipeline, "anomaly_detection_node", stub_anomaly)
     monkeypatch.setattr(pipeline, "reporting_node", stub_reporting)
 
@@ -189,9 +185,6 @@ async def test_graph_routes_to_reporting_when_flagged(monkeypatch):
 
 @pytest.mark.anyio
 async def test_graph_skips_reporting_when_clean(monkeypatch):
-    async def stub_ingest(state):
-        return {"source": "stripe", "sync_result": {"success": True, "record_count": 1}}
-
     async def stub_anomaly(state):
         return {
             "anomaly_flags": [],
@@ -202,7 +195,6 @@ async def test_graph_skips_reporting_when_clean(monkeypatch):
     async def stub_reporting(state):
         raise AssertionError("reporting must not run when nothing was flagged")
 
-    monkeypatch.setattr(pipeline, "stripe_ingestion_node", stub_ingest)
     monkeypatch.setattr(pipeline, "anomaly_detection_node", stub_anomaly)
     monkeypatch.setattr(pipeline, "reporting_node", stub_reporting)
 

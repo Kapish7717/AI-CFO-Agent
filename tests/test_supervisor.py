@@ -17,7 +17,7 @@ def _stub_subgraphs(monkeypatch, calls: list) -> None:
 
     async def stub_pipeline(state):
         calls.append(("pipeline", state.get("trigger")))
-        return {"sync_result": {"success": True, "record_count": 0}}
+        return {"anomaly_result": {"success": True, "anomaly_count": 0}}
 
     async def stub_analyst(state):
         calls.append(("analyst", state.get("question")))
@@ -29,11 +29,81 @@ def _stub_subgraphs(monkeypatch, calls: list) -> None:
 
 @pytest.mark.anyio
 async def test_supervisor_routes_data_triggers_to_pipeline():
-    assert await supervisor.supervisor_node({"trigger": "new_data"}) == {
-        "route": "pipeline",
-        "route_error": None,
-    }
+    out = await supervisor.supervisor_node({"trigger": "new_data"})
+    assert out["route"] == "pipeline"
+    assert out["route_error"] is None
     assert (await supervisor.supervisor_node({"trigger": "scheduled"}))["route"] == "pipeline"
+
+
+@pytest.mark.anyio
+async def test_supervisor_resolves_the_report_window(monkeypatch):
+    # The window is resolved here so the anomaly pass and the report agree; the
+    # nodes must not each decide their own period.
+    import app.db.database as database
+
+    monkeypatch.setattr(
+        database, "get_user_settings", lambda user_id: {"report_months": 3}
+    )
+    monkeypatch.setattr(
+        database, "get_max_transaction_date", lambda user_id: "2026-09-15"
+    )
+
+    out = await supervisor.supervisor_node({"trigger": "new_data", "user_id": 4})
+
+    assert out["report_months"] == 3
+    assert out["start_date"] == "2026-07-01"
+    assert out["end_date"] == "2026-09-15"
+
+
+@pytest.mark.anyio
+async def test_supervisor_falls_back_to_twelve_months(monkeypatch):
+    import app.db.database as database
+    from app.graph.period import DEFAULT_MONTHS
+
+    monkeypatch.setattr(database, "get_user_settings", lambda user_id: {})
+    monkeypatch.setattr(
+        database, "get_max_transaction_date", lambda user_id: "2026-09-15"
+    )
+
+    out = await supervisor.supervisor_node({"trigger": "scheduled", "user_id": 4})
+
+    assert out["report_months"] == DEFAULT_MONTHS
+    assert out["start_date"] == "2025-10-01"
+
+
+@pytest.mark.anyio
+async def test_supervisor_window_survives_a_settings_failure(monkeypatch):
+    # A database hiccup must degrade to the default period, not fail the run.
+    import app.db.database as database
+    from app.graph.period import DEFAULT_MONTHS
+
+    def boom(user_id):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(database, "get_user_settings", boom)
+    monkeypatch.setattr(database, "get_max_transaction_date", boom)
+
+    out = await supervisor.supervisor_node({"trigger": "new_data", "user_id": 4})
+
+    assert out["route"] == "pipeline"
+    assert out["route_error"] is None
+    assert out["report_months"] == DEFAULT_MONTHS
+
+
+@pytest.mark.anyio
+async def test_supervisor_leaves_chat_without_a_window(monkeypatch):
+    # Chat goes to the analyst, which does not report, so no period is needed.
+    import app.db.database as database
+
+    def boom(user_id):
+        raise AssertionError("chat must not resolve a report window")
+
+    monkeypatch.setattr(database, "get_user_settings", boom)
+    monkeypatch.setattr(database, "get_max_transaction_date", boom)
+
+    out = await supervisor.supervisor_node({"trigger": "chat", "user_id": 4})
+
+    assert out == {"route": "analyst", "route_error": None}
 
 
 @pytest.mark.anyio
@@ -86,7 +156,7 @@ async def test_graph_delegates_to_pipeline_subgraph(monkeypatch):
 
     assert calls == [("pipeline", "new_data")]
     assert result["route"] == "pipeline"
-    assert result["sync_result"] == {"success": True, "record_count": 0}
+    assert result["anomaly_result"] == {"success": True, "anomaly_count": 0}
     assert "analyst" not in result, "chat subgraph must not run for a data trigger"
 
 
@@ -102,7 +172,7 @@ async def test_graph_delegates_chat_to_analyst_subgraph(monkeypatch):
 
     assert calls == [("analyst", "why did spend spike?")]
     assert result["analyst"] == {"success": True, "implemented": True}
-    assert "sync_result" not in result, "chat must not trigger ingestion"
+    assert "anomaly_result" not in result, "chat must not run the reporting pipeline"
 
 
 @pytest.mark.anyio

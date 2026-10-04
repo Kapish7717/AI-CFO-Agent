@@ -11,8 +11,8 @@ import asyncio
 
 import pandas as pd
 
-from app.graph.ingestion_node import _as_records, _call, _ok_records
 from app.graph.mcp_client import get_pipeline_tools
+from app.graph.mcp_tools import _call, _ok_records
 from app.graph.state import PipelineState
 from app.tools.anomaly_detection import detect_all_anomalies
 
@@ -153,11 +153,20 @@ async def anomaly_detection_node(state: PipelineState) -> dict:
 
     limit = state.get("analysis_limit", 1000)
     tools = await get_pipeline_tools()
-    result = await _call(tools, "list_transactions", user_id=user_id, limit=limit)
-    rows = _ok_records(_as_records(result))
+    # The window comes from the supervisor so the anomalies and the report tables
+    # describe the same period.
+    records = await _call(
+        tools,
+        "list_transactions",
+        user_id=user_id,
+        limit=limit,
+        start_date=state.get("start_date"),
+        end_date=state.get("end_date"),
+    )
+    rows = _ok_records(records)
 
     if not rows:
-        error = next((r["error"] for r in result if "error" in r), None)
+        error = next((r["error"] for r in records if "error" in r), None)
         if error:
             return {
                 "anomaly_result": {"success": False, "error": error, "anomaly_count": 0},
