@@ -62,6 +62,41 @@ Think of it as a financial analyst that never sleeps: it ingests your transactio
 ## 🏗️ Architecture
 
 ```
+┌─────────────────────┐      ┌──────────────────────────────────┐
+│  Frontend (SPA)     │ HTTP │  FastAPI Backend (app/main.py)   │
+│  TanStack Start     │◄────►│  ├─ 10 API routers (app/api/)    │
+│  React 19 + Vite 8  │ JWT  │  └─ Background loops (reports,    │
+│  Tailwind 4         │      │     Stripe sync)                  │
+└─────────────────────┘      └───────┬──────────────────────────┘
+                                      │ ainvoke / astream, one trigger
+                              ┌───────▼──────────────────────────┐
+                              │  LangGraph Supervisor            │
+                              │  app/graph/supervisor.py         │
+                              │  routes on `trigger`:            │
+                              │   new_data | scheduled -> data   │
+                              │   chat               -> analyst   │
+                              └───┬───────────────────────┬──────┘
+                                  │ subgraph              │ subgraph
+                    ┌─────────────▼───────────┐   ┌───────▼────────────┐
+                    │ pipeline (deterministic)│   │ analyst            │
+                    │  anomaly -> reporting    │   │  Text-to-SQL RAG   │
+                    │  (conditional, read-only)│  │  streams via       │
+                    └─────────────┬───────────┘   │  custom stream     │
+                                  │               └────────────────────┘
+                                  │ stdio (langchain-mcp-adapters)
+                    ┌─────────────▼───────────────────────────────┐
+                    │ Domain MCP servers (app/mcp/)                │
+                    │  supabase-mcp (read-only) · reporting-mcp   │
+                    └─────────────┬───────────────────────────────┘
+                                  │ imports
+                    ┌─────────────▼───────────────────────────────┐
+                    │ Shared tool implementations                 │
+                    │  app/agents/mcp_server.py                   │
+                    │  ① ingest_financial_data                     │
+                    │  ② detect_financial_anomalies                │
+                    │  ③ generate_cfo_pdf_report                   │
+                    │  ④ send_email_report / schedule_meeting      │
+                    └─────────────────────────────────────────────┘
 ┌──────────────────────┐      ┌───────────────────────────────────┐
 │  Frontend (SPA)      │ HTTP │  FastAPI Backend (app/main.py)    │
 │  TanStack Start      │◄────►│  ├─ 10 API routers (app/api/)     │
@@ -93,6 +128,22 @@ Think of it as a financial analyst that never sleeps: it ingests your transactio
 ```
 ├── app/
 │   ├── main.py            # FastAPI entry point (serves API + built SPA)
+│   ├── graph/             # Supervisor + pipeline + analyst subgraphs
+│   ├── agents/            # Shared FastMCP tool implementations
+│   ├── api/               # Route routers: auth, dashboard, chat, forecast,
+│   │                      # anomaly, report, integrations, providers, settings, agent
+│   ├── mcp/               # Domain MCP servers: supabase (read-only), reporting
+│   ├── core/              # Settings (pydantic), logging, security (JWT/PBKDF2)
+│   ├── db/                # psycopg2 pool, schema init/migrations, Supabase storage
+│   ├── services/          # RAG (Text-to-SQL), LLM factory, Stripe sync,
+│   │                      # budget breaches, sessions
+│   └── tools/             # Data ingestion, anomaly detection, PDF report generator
+├── frontend/              # TanStack Start SPA (routes/, components/, lib/)
+├── scripts/               # Model discovery CLI
+├── tests/                 # pytest suite + eval harnesses + fixtures
+├── Dockerfile             # Multi-stage build (node:20 → python:3.12-slim)
+├── docker-compose.yml     # api + postgres:16 stack
+└── start.sh               # Production launcher (uvicorn on :7860)
 │   ├── agents/             # LangGraph graph + FastMCP tool server
 │   ├── api/                # Route routers: auth, dashboard, chat, forecast,
 │   │                       # anomaly, report, integrations, providers, settings, agent
@@ -215,7 +266,7 @@ ruff check app tests scripts          # Python linting
 cd frontend && npm run lint           # ESLint + Prettier
 ```
 
-The suite covers the agent graph (mocked MCP tools), the deterministic pipeline, anomaly detection golden files, ingestion, the RAG pipeline, security primitives, and trajectory/report-content eval harnesses (`tests/evals/`).
+The suite covers the supervisor's trigger routing, the deterministic pipeline, the domain MCP servers, anomaly detection golden files, upload ingestion, the RAG pipeline, security primitives, and trajectory/report-content eval harnesses (`tests/evals/`).
 
 ---
 
@@ -227,8 +278,8 @@ The suite covers the agent graph (mocked MCP tools), the deterministic pipeline,
 | Auth | `POST /api/auth/register`, `POST /api/auth/login`, `GET /api/auth/me` |
 | Google OAuth | `GET /auth/url`, `POST /auth/exchange`, `GET /auth/callback`, `GET /auth/status` |
 | Dashboard | `GET /api/dashboard/overview` |
-| Agent | `POST /api/agent/run` (deterministic ingest → detect → report → email pipeline) |
-| Chat / RAG | `GET /api/chat/history`, `POST /api/chat/data-query` |
+| Agent | `POST /api/agent/run` (supervisor graph, `new_data` trigger: ingest → detect → report → email) |
+| Chat / RAG | `GET /api/chat/history`, `POST /api/chat/data-query`, `POST /api/chat/data-query/stream` (supervisor graph, `chat` trigger) |
 | Forecast | `POST /api/v1/forecast` |
 | Anomaly | `POST /api/v1/anomaly` |
 | Data | `POST /api/upload`, `POST /api/v1/data/connect` |

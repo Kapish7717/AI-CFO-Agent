@@ -4,7 +4,7 @@ import os
 import re
 import shutil
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 
 from app.core.config import get_settings
@@ -78,7 +78,6 @@ def connect_data(payload: DataConnectRequest, request: Request, user_id: int = D
 
 @router.post("/api/upload")
 async def upload_file(
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     user_id: int = Depends(get_admin_user_id),
     file_type: str = None,
@@ -132,6 +131,10 @@ async def upload_file(
                 os.rename(temp_path, file_path)
             clean_path = os.path.abspath(file_path).replace("\\", "/")
 
+        # The ingest is awaited, not backgrounded: the CFO run reads
+        # unified_transactions, so returning before the rows land would let a run
+        # analyse a half-loaded period.
+        ingest = None
         if file_type in ("expense", "revenue"):
             if file_type == "expense":
                 update_user_settings(user_id, {
@@ -143,9 +146,9 @@ async def upload_file(
                     "revenue_file_path": clean_path,
                     "revenue_file_name": safe_name,
                 })
-            background_tasks.add_task(_ingest_uploaded_data, user_id)
+            ingest = await _ingest_uploaded_data(user_id)
 
-        return {"file_path": clean_path, "filename": safe_name}
+        return {"file_path": clean_path, "filename": safe_name, "ingest": ingest}
     except HTTPException:
         raise
     except Exception as e:
@@ -153,8 +156,12 @@ async def upload_file(
         raise HTTPException(status_code=500, detail="Failed to upload file.") from e
 
 
-async def _ingest_uploaded_data(user_id: int):
-    """Ingest the user's uploaded sheets and refresh budget breaches."""
+async def _ingest_uploaded_data(user_id: int) -> dict:
+    """Ingest the user's uploaded sheets and refresh budget breaches.
+
+    Returns the outcome instead of only logging it: the caller awaits this, so an
+    ingest that failed has to be reportable rather than silent.
+    """
     try:
         from app.agents.mcp_server import ingest_financial_data
         from app.db.database import get_user_settings
@@ -166,13 +173,20 @@ async def _ingest_uploaded_data(user_id: int):
 
         if not expense:
             logger.warning("No expense data to ingest for user %s", user_id)
-            return
+            return {"success": False, "error": "No expense data to ingest"}
 
         result = await ingest_financial_data(expense, revenue, user_id=user_id)
-        refresh_budget_breaches(user_id)
-        logger.info("Upload ingest completed for user %s: %s", user_id, result[:200] if result else "done")
+        await asyncio.to_thread(refresh_budget_breaches, user_id)
+        detail = result[:200] if result else "done"
+        logger.info("Upload ingest completed for user %s: %s", user_id, detail)
+        # ingest_financial_data reports parse problems as a returned error string
+        # rather than raising, so the response has to carry it.
+        if isinstance(result, str) and result.startswith("Error"):
+            return {"success": False, "error": result}
+        return {"success": True, "detail": detail}
     except Exception as e:
         logger.error("Upload ingest error for user %s: %s", user_id, e, exc_info=True)
+        return {"success": False, "error": str(e)}
 
 
 # ---------- Stripe connect / status / disconnect ----------

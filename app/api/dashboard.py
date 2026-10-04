@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends
 from app.agents.mcp_server import get_user_state_paths
 from app.core.config import get_settings
 from app.core.security import get_active_user_id
-from app.db.database import get_user_settings, get_user_transactions
+from app.db.database import get_domain_user_ids, get_user_settings, get_user_transactions
 from app.db.storage import download_from_storage
 
 router = APIRouter()
@@ -40,6 +40,9 @@ def get_selected_month_data_raw(df, month_str):
 
 @router.get("/api/dashboard/overview")
 def get_dashboard_overview(month: str = None, user_id: int = Depends(get_active_user_id)):
+    # Resolve all user IDs in this company domain
+    domain_user_ids = get_domain_user_ids(user_id)
+
     state_file, report_file, breaches_file = get_user_state_paths(user_id)
     cash_base = get_settings().CASH_BASE_AMOUNT
     
@@ -49,11 +52,11 @@ def get_dashboard_overview(month: str = None, user_id: int = Depends(get_active_
     except Exception:
         pass
     
-    # Check settings for budget limits
+    # Check settings for budget limits (falls back to admin's files if user has none)
     settings = get_user_settings(user_id)
     
-    # Query transactions from database
-    rows = get_user_transactions(user_id)
+    # Query transactions for all users in the same domain
+    rows = get_user_transactions(user_id, user_ids=domain_user_ids)
     
     if not rows:
         return {

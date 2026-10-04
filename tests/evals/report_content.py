@@ -170,15 +170,26 @@ def extract_report_content(pdf_path: str) -> ReportContent:
 # --------------------------------------------------------------------------- #
 # Narrative fact-checking
 # --------------------------------------------------------------------------- #
-def check_narrative_facts(text: str, ground_truth: dict[str, float]) -> list[str]:
+def check_narrative_facts(
+    text: str,
+    ground_truth: dict[str, float],
+    extra_truths: list[float] | None = None,
+) -> list[str]:
     """Flag dollar amounts in the narrative that match no known total.
 
     The LLM narrative is non-deterministic, so we can't assert its exact text —
     but we *can* catch hallucinations: if it cites a figure that contradicts
     every real total (revenue, expenses, profit), the report is wrong.
+
+    ``extra_truths`` carries totals that are genuine but are not headline KPIs —
+    currently the month-by-month revenue *and* expense series. The prompt hands the
+    model both series explicitly, so a narrative that cites them is quoting the
+    report, not inventing a number, and flagging them would make the check fire on
+    correct output.
     """
     amounts = [float(m.replace(",", "")) for m in re.findall(r"\$([\d,]+(?:\.\d+)?)", text)]
     truths = [v for v in ground_truth.values() if isinstance(v, (int, float))]
+    truths += [v for v in (extra_truths or []) if isinstance(v, (int, float))]
     violations = []
     for a in amounts:
         if not any(abs(a - t) <= max(1.0, 0.01 * abs(t)) for t in truths):
@@ -259,7 +270,18 @@ def score_report_content(
     count_ok = exp_count is None or actual.total_anomalies == exp_count
 
     # Narrative fact consistency ------------------------------------------- #
-    facts = check_narrative_facts(actual.narrative, expected.get("narrative_ground_truth", {}))
+    # Both monthly series are quotable: the prompt hands the model month-wise
+    # revenue *and* month-wise expenses, so the allowlist has to carry both.
+    quotable = [
+        m.get("total")
+        for key in ("expected_monthly_revenue", "expected_monthly_expenses")
+        for m in expected.get(key, [])
+    ]
+    facts = check_narrative_facts(
+        actual.narrative,
+        expected.get("narrative_ground_truth", {}),
+        extra_truths=quotable,
+    )
     facts_ok = len(facts) == 0
 
     # Weighted combination --------------------------------------------------- #

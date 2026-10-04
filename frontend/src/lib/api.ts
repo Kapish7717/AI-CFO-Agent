@@ -146,6 +146,8 @@ export interface UserSettings {
   fallback_api_key: string | null;
   report_email: string | null;
   report_schedule: string | null;
+  report_months: number;
+  report_month_options: number[];
 }
 
 export const SettingsAPI = {
@@ -232,6 +234,7 @@ export const DashboardAPI = {
 export interface ChatMessage {
   sender: "user" | "agent";
   text: string;
+  id: number;
   timestamp?: string;
 }
 
@@ -338,6 +341,45 @@ export const AgentAPI = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ user_id: userId ?? currentUserId(), question }),
     }).then((r) => handle<DataQueryResult>(r)),
+
+  dataQueryStream: async function* (question: string, userId?: number) {
+    const res = await authedFetch(withUserId("/api/chat/data-query/stream", userId), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: userId ?? currentUserId(), question }),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      const body = text ? safeJson(text) : null;
+      const msg =
+        (body && (body.detail || body.error || body.message)) ||
+        res.statusText ||
+        "Request failed";
+      throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+    }
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop()!;
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const payload = line.slice(6);
+        if (!payload) continue;
+        try {
+          const obj = JSON.parse(payload);
+          if (obj.chunk) yield obj.chunk;
+          if (obj.done) return obj.answer;
+        } catch {
+          // skip malformed frames
+        }
+      }
+    }
+  },
 };
 
 // ---------- Admin ----------

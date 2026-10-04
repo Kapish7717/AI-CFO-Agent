@@ -3,8 +3,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -115,65 +116,117 @@ app.include_router(agent_router)
 # --------------------------------------------------------------------------- #
 # Background loops
 # --------------------------------------------------------------------------- #
-_report_last_run: dict = {}
 
 
 async def _run_scheduled_pipeline(user_id: int):
-    """Run one user's CFO pipeline via the autonomous agent."""
+    """Run one user's CFO pipeline through the MCP supervisor graph.
+
+    The graph is driven by state, not by a prose prompt: the supervisor routes on
+    ``trigger`` and the reporting node reads the user's own ``report_months`` and
+    ``report_email`` from user_settings. The window is resolved once per run
+    inside the supervisor, so the anomaly pass and the PDF cover the same dates.
+
+    Data is read from unified_transactions, which the 60s Stripe loop and the
+    Stripe webhook keep current; both write idempotently on
+    (external_id, source, user_id), so this run only reads.
+    """
     try:
-        from app.db.database import get_user_settings
+        from app.graph.supervisor import graph
 
-        settings = await asyncio.to_thread(get_user_settings, user_id)
-        expense = settings.get("expense_url") or settings.get("expense_file_path")
-        revenue = settings.get("revenue_url") or settings.get("revenue_file_path")
-        email = (settings.get("report_email") or "").strip()
+        run_started = time.perf_counter()
+        result = await graph.ainvoke(
+            {"user_id": user_id, "trigger": "scheduled", "source": "stripe"}
+        )
+        elapsed_ms = (time.perf_counter() - run_started) * 1000.0
 
-        if not expense:
-            logger.warning("[SCHEDULER] No expense data for user %s", user_id)
-            return
-
-        from langchain_core.messages import HumanMessage
-
-        from app.agents.cfo_agent import graph
-
-        message = f"USER_ID: {user_id}\n\nRun the full CFO workflow:\n"
-        message += f"EXPENSE_FILE_PATH: {expense}\n"
-        if revenue:
-            message += f"REVENUE_FILE_PATH: {revenue}\n"
-        if email:
-            message += f"Send the report to {email}\n"
-
-        result = await graph.ainvoke({"messages": [HumanMessage(content=message)]})
-        final_msg = result["messages"][-1].content
-        logger.info("[SCHEDULER] Pipeline result for user %s: %s", user_id, final_msg[:200])
+        anomalies = result.get("anomaly_result") or {}
+        report = result.get("report") or {}
+        logger.info(
+            "[SCHEDULER] user=%s took=%.0fms rows=%s anomalies=%s report=%s%s",
+            user_id,
+            elapsed_ms,
+            anomalies.get("rows_analyzed", "?"),
+            anomalies.get("anomaly_count", 0),
+            report.get("status", "not generated"),
+            f" error={report['error']}" if report.get("error") else "",
+        )
     except Exception as e:
         logger.error("[SCHEDULER] Pipeline failed for user %s: %s", user_id, e)
 
 
+#: A run is due if its scheduled minute falls in (last tick, now]. Matching the
+#: current minute exactly meant any hiccup - a slow tick, a deploy, a restart -
+#: silently cost that user the whole day.
+_SCHEDULER_STARTUP_GRACE_MINUTES = 15
+
+
+def _scheduled_moment(schedule: str, day: datetime) -> datetime | None:
+    """Parse a stored ``report_schedule`` into a datetime on *day*.
+
+    Returns None for anything unparseable so a bad value is skipped for that
+    user rather than raising inside the loop.
+    """
+    text = (schedule or "").strip()[:5]
+    if not text:
+        return None
+    try:
+        hour, minute = (int(part) for part in text.split(":"))
+    except (TypeError, ValueError):
+        return None
+    try:
+        return day.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    except ValueError:
+        return None
+
+
 async def _scheduled_report_loop():
-    """Every 60s, run the CFO pipeline for users whose report_schedule (HH:MM)
-    matches the current time. Each user runs at most once per day."""
+    """Every 60s, run the CFO pipeline for each user whose report_schedule (HH:MM)
+    falls inside the interval just elapsed. Each user runs at most once per day.
+
+    Two deliberate differences from a plain "is it this minute" check:
+
+    * a schedule is matched against the window (last tick, now], so a slow tick
+      or a brief restart still runs the report instead of dropping the day;
+    * the once-a-day latch lives in user_settings rather than in memory, so a
+      deploy cannot produce a duplicate report for someone who already ran.
+
+    A report is generated whether or not it can be emailed; report_email only
+    decides whether the delivery step runs.
+    """
+    # The first pass looks back a short grace period so a report scheduled
+    # moments before a deploy still runs. A longer lookback would fire a burst
+    # of reports for everyone on a fresh start.
+    window_end = datetime.now()
+    window_start = window_end - timedelta(minutes=_SCHEDULER_STARTUP_GRACE_MINUTES)
     while True:
         try:
-            now = datetime.now()
-            today = now.strftime("%Y-%m-%d")
-            hhmm = now.strftime("%H:%M")
+            from app.db.database import (
+                get_all_user_ids,
+                get_user_settings,
+                update_user_settings,
+            )
 
-            from app.db.database import get_all_user_ids, get_user_settings
             user_ids = await asyncio.to_thread(get_all_user_ids)
             for user_id in user_ids:
                 try:
                     settings_row = await asyncio.to_thread(get_user_settings, user_id)
-                    schedule = (settings_row.get("report_schedule") or "").strip()
-                    email = (settings_row.get("report_email") or "").strip()
-                    if not schedule or not email:
+                    due = _scheduled_moment(settings_row.get("report_schedule"), window_end)
+                    if due is None:
                         continue
-                    if schedule[:5] != hhmm:
+                    if not (window_start < due <= window_end):
                         continue
-                    if _report_last_run.get(user_id) == today:
+                    today = window_end.strftime("%Y-%m-%d")
+                    if settings_row.get("report_last_run") == today:
                         continue
-                    _report_last_run[user_id] = today
-                    logger.info("[SCHEDULER] Triggering report for user %s at %s.", user_id, hhmm)
+                    # Claim the day before dispatching, so a failure here cannot
+                    # turn into a retry storm on the next tick.
+                    await asyncio.to_thread(
+                        update_user_settings, user_id, {"report_last_run": today}
+                    )
+                    logger.info(
+                        "[SCHEDULER] Triggering report for user %s (scheduled %s).",
+                        user_id, due.strftime("%H:%M"),
+                    )
                     asyncio.create_task(_run_scheduled_pipeline(user_id))
                 except Exception as e:
                     logger.error("[SCHEDULER] Error checking user %s: %s", user_id, e)
@@ -183,6 +236,8 @@ async def _scheduled_report_loop():
             logger.error("[SCHEDULER] Loop error: %s", e)
 
         await asyncio.sleep(60)
+        window_start = window_end
+        window_end = datetime.now()
 
 
 async def _stripe_sync_loop():
