@@ -65,6 +65,15 @@ export function AppShell({ children }: { children: ReactNode }) {
     }
   }, [onAuthPage, isAuthenticated, navigate, pathname]);
 
+  // Must be called before any early return: hooks cannot be skipped, or the
+  // logout render (isAuthenticated true -> false) throws "rendered fewer hooks".
+  const { data: googleStatus, isLoading: googleLoading } = useQuery({
+    queryKey: ["google-status"],
+    queryFn: () => AuthAPI.googleStatus(),
+    enabled: isAuthenticated && !onAuthPage,
+    refetchOnWindowFocus: true,
+  });
+
   if (onAuthPage) return <>{children}</>;
   if (!isAuthenticated) return null;
 
@@ -75,12 +84,6 @@ export function AppShell({ children }: { children: ReactNode }) {
       .slice(0, 2)
       .join("")
       .toUpperCase();
-
-  const { data: googleStatus, isLoading: googleLoading } = useQuery({
-    queryKey: ["google-status"],
-    queryFn: () => AuthAPI.googleStatus(),
-    refetchOnWindowFocus: true,
-  });
 
   const googleConnected = !!googleStatus?.authenticated;
 
