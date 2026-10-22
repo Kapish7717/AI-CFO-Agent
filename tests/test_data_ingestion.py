@@ -141,6 +141,10 @@ def test_strip_unified_transaction_normalizes_stripe_payload():
 
 
 def test_strip_unified_transaction_categorizes_payout_refund_as_expense():
+    # A payout is the Stripe balance reaching the bank, not money spent. Booking
+    # it as an expense counted the same funds a second time (once as revenue on
+    # the originating charge, once as cost here), so it is recorded as an
+    # internal transfer and excluded from both revenue and expense totals.
     payout = strip_unified_transaction(
         {
             "id": "po_xyz",
@@ -152,9 +156,25 @@ def test_strip_unified_transaction_categorizes_payout_refund_as_expense():
         },
         source="stripe",
     )
-    assert payout["transaction_type"] == "expense"
-    assert payout["direction"] == "outflow"
-    assert payout["category"] == "expense"
+    assert payout["transaction_type"] == "transfer"
+    assert payout["direction"] == "internal"
+    assert payout["category"] == "transfer"
+
+    # A dispute, by contrast, really does take the money back and stays spend.
+    dispute = strip_unified_transaction(
+        {
+            "id": "dp_xyz",
+            "object": "dispute",
+            "amount": 50000,
+            "currency": "usd",
+            "created": 1710000000,
+            "status": "lost",
+        },
+        source="stripe",
+    )
+    assert dispute["transaction_type"] == "expense"
+    assert dispute["direction"] == "outflow"
+    assert dispute["category"] == "expense"
 
     refund = strip_unified_transaction(
         {
