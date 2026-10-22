@@ -134,11 +134,12 @@ Think of it as a financial analyst that never sleeps: it ingests your transactio
 │   │                      # anomaly, report, integrations, providers, settings, agent
 │   ├── mcp/               # Domain MCP servers: supabase (read-only), reporting
 │   ├── core/              # Settings (pydantic), logging, security (JWT/PBKDF2)
-│   ├── db/                # psycopg2 pool, schema init/migrations, Supabase storage
+│   ├── db/                # psycopg2 pool, schema bootstrap (init_db), Supabase storage
 │   ├── services/          # RAG (Text-to-SQL), LLM factory, Stripe sync,
 │   │                      # budget breaches, sessions
 │   └── tools/             # Data ingestion, anomaly detection, PDF report generator
 ├── frontend/              # TanStack Start SPA (routes/, components/, lib/)
+├── db/                    # dbmate migrations (db/migrations/) + db/seed.sql test data — see db/README.md
 ├── scripts/               # Model discovery CLI
 ├── tests/                 # pytest suite + eval harnesses + fixtures
 ├── Dockerfile             # Multi-stage build (node:20 → python:3.12-slim)
@@ -148,11 +149,12 @@ Think of it as a financial analyst that never sleeps: it ingests your transactio
 │   ├── api/                # Route routers: auth, dashboard, chat, forecast,
 │   │                       # anomaly, report, integrations, providers, settings, agent
 │   ├── core/                # Settings (pydantic), logging, security (JWT/PBKDF2)
-│   ├── db/                  # psycopg2 pool, schema init/migrations, Supabase storage
+│   ├── db/                  # psycopg2 pool, schema bootstrap (init_db), Supabase storage
 │   ├── services/             # Agent runner, RAG (Text-to-SQL), LLM factory,
 │   │                         # Stripe sync, budget breaches, sessions
 │   └── tools/                # Data ingestion, anomaly detection, PDF report generator
 ├── frontend/               # TanStack Start SPA (routes/, components/, lib/)
+├── db/                     # dbmate migrations (db/migrations/) + db/seed.sql test data — see db/README.md
 ├── scripts/                # Model discovery CLI
 ├── tests/                  # pytest suite + eval harnesses + fixtures
 ├── Dockerfile              # Multi-stage build (node:20 → python:3.12-slim)
@@ -224,6 +226,40 @@ See [.env.example](.env.example) for every variable, including CORS, upload limi
    ```
 
 > In production mode the backend serves the built frontend itself, so a single process on one port is enough (see below).
+
+### Database migrations
+
+The initial schema is created automatically at startup by the idempotent
+`init_db()` bootstrap. Everything **after** that baseline is a versioned SQL
+file in `db/migrations/`, applied with [dbmate](https://dbmate.org):
+
+```bash
+winget install amacneil.dbmate   # once per machine (brew install dbmate on macOS)
+dbmate new add_budget_index      # create a migration file
+dbmate -e DATABASE_URL_MIGRATIONS up       # apply pending migrations
+dbmate -e DATABASE_URL_MIGRATIONS status   # what is applied / pending
+```
+
+Migrations use `DATABASE_URL_MIGRATIONS` (Supabase session pooler, port 5432)
+rather than the app's `DATABASE_URL` (transaction pooler, port 6543), which
+breaks the prepared statements dbmate needs. Run `... up` as a deploy step (CI
+or release script) — migrations are not applied at app startup. See
+[`db/README.md`](db/README.md) for the full convention, including how this
+coexists with `init_db()`.
+
+### Test data
+
+Seed rows (two test users, three months of transactions with deliberate budget
+breaches) live in **`db/seed.sql`** — deliberately *not* a migration, so it is
+re-runnable and never reaches production:
+
+```bash
+python scripts/seed.py
+```
+
+Run it once the app has created the schema. Logins: `test@example.com` /
+`admin@example.com`, password `password123`. Details in
+[`db/README.md`](db/README.md).
 
 ---
 
