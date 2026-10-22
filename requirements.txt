@@ -37,6 +37,16 @@ psycopg2-binary==2.9.12
 supabase>=2.0.0
 stripe>=10.0
 
+# --- Cache (Upstash Redis, REST) ---------------------------------------------
+# Dashboard response cache (app/core/cache.py). Optional at runtime — the app
+# fail-opens to "no cache" if the package or credentials are missing — but it
+# must be installed for production to actually cache.
+upstash-redis>=1.0,<2.0
+
+# --- Security / crypto -------------------------------------------------------
+# Fernet (AES-128-CBC + HMAC) encrypts stored QuickBooks OAuth tokens at rest.
+cryptography>=43.0
+
 # --- Google integrations -----------------------------------------------------
 google-api-python-client>=2.150.0
 google-auth-httplib2>=0.2.0
