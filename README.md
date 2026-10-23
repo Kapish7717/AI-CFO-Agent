@@ -59,6 +59,110 @@ Think of it as a financial analyst that never sleeps: it ingests your transactio
 
 ---
 
+## 🏗️ Architecture
+
+```
+┌─────────────────────┐      ┌──────────────────────────────────┐
+│  Frontend (SPA)     │ HTTP │  FastAPI Backend (app/main.py)   │
+│  TanStack Start     │◄────►│  ├─ 10 API routers (app/api/)    │
+│  React 19 + Vite 8  │ JWT  │  └─ Background loops (reports,    │
+│  Tailwind 4         │      │     Stripe sync)                  │
+└─────────────────────┘      └───────┬──────────────────────────┘
+                                      │ ainvoke / astream, one trigger
+                              ┌───────▼──────────────────────────┐
+                              │  LangGraph Supervisor            │
+                              │  app/graph/supervisor.py         │
+                              │  routes on `trigger`:            │
+                              │   new_data | scheduled -> data   │
+                              │   chat               -> analyst   │
+                              └───┬───────────────────────┬──────┘
+                                  │ subgraph              │ subgraph
+                    ┌─────────────▼───────────┐   ┌───────▼────────────┐
+                    │ pipeline (deterministic)│   │ analyst            │
+                    │  anomaly -> reporting    │   │  Text-to-SQL RAG   │
+                    │  (conditional, read-only)│  │  streams via       │
+                    └─────────────┬───────────┘   │  custom stream     │
+                                  │               └────────────────────┘
+                                  │ stdio (langchain-mcp-adapters)
+                    ┌─────────────▼───────────────────────────────┐
+                    │ Domain MCP servers (app/mcp/)                │
+                    │  supabase-mcp (read-only) · reporting-mcp   │
+                    └─────────────┬───────────────────────────────┘
+                                  │ imports
+                    ┌─────────────▼───────────────────────────────┐
+                    │ Shared tool implementations                 │
+                    │  app/agents/mcp_server.py                   │
+                    │  ① ingest_financial_data                     │
+                    │  ② detect_financial_anomalies                │
+                    │  ③ generate_cfo_pdf_report                   │
+                    │  ④ send_email_report / schedule_meeting      │
+                    └─────────────────────────────────────────────┘
+┌──────────────────────┐      ┌───────────────────────────────────┐
+│  Frontend (SPA)      │ HTTP │  FastAPI Backend (app/main.py)    │
+│  TanStack Start      │◄────►│  ├─ 10 API routers (app/api/)     │
+│  React 19 + Vite 8   │ JWT  │  ├─ Deterministic agent runner    │
+│  Tailwind 4          │      │  └─ Background loops (reports,    │
+└──────────────────────┘      │     Stripe sync)                  │
+                               └────────┬───────────────────────────┘
+                                        │ stdio (langchain-mcp-adapters)
+                               ┌────────▼───────────────────────────┐
+                               │  LangGraph Agent (ReAct-style)     │
+                               │  app/agents/cfo_agent.py           │
+                               │  agent → tools → halt nodes        │
+                               └────────┬───────────────────────────┘
+                                        │ FastMCP
+                               ┌────────▼───────────────────────────┐
+                               │  MCP Server: CFO_Central_Server    │
+                               │  app/agents/mcp_server.py          │
+                               │  ① authenticate_google             │
+                               │  ② ingest_financial_data           │
+                               │  ③ detect_financial_anomalies      │
+                               │  ④ generate_cfo_pdf_report          │
+                               │  ⑤ send_email_report                │
+                               │  ⑥ schedule_meeting                 │
+                               └───────────────────────────────────┘
+```
+
+**Project layout:**
+
+```
+├── app/
+│   ├── main.py            # FastAPI entry point (serves API + built SPA)
+│   ├── graph/             # Supervisor + pipeline + analyst subgraphs
+│   ├── agents/            # Shared FastMCP tool implementations
+│   ├── api/               # Route routers: auth, dashboard, chat, forecast,
+│   │                      # anomaly, report, integrations, providers, settings, agent
+│   ├── mcp/               # Domain MCP servers: supabase (read-only), reporting
+│   ├── core/              # Settings (pydantic), logging, security (JWT/PBKDF2)
+│   ├── db/                # psycopg2 pool, schema bootstrap (init_db), Supabase storage
+│   ├── services/          # RAG (Text-to-SQL), LLM factory, Stripe sync,
+│   │                      # budget breaches, sessions
+│   └── tools/             # Data ingestion, anomaly detection, PDF report generator
+├── frontend/              # TanStack Start SPA (routes/, components/, lib/)
+├── db/                    # dbmate migrations (db/migrations/) + db/seed.sql test data — see db/README.md
+├── scripts/               # Model discovery CLI
+├── tests/                 # pytest suite + eval harnesses + fixtures
+├── Dockerfile             # Multi-stage build (node:20 → python:3.12-slim)
+├── docker-compose.yml     # api + postgres:16 stack
+└── start.sh               # Production launcher (uvicorn on :7860)
+│   ├── agents/             # LangGraph graph + FastMCP tool server
+│   ├── api/                # Route routers: auth, dashboard, chat, forecast,
+│   │                       # anomaly, report, integrations, providers, settings, agent
+│   ├── core/                # Settings (pydantic), logging, security (JWT/PBKDF2)
+│   ├── db/                  # psycopg2 pool, schema bootstrap (init_db), Supabase storage
+│   ├── services/             # Agent runner, RAG (Text-to-SQL), LLM factory,
+│   │                         # Stripe sync, budget breaches, sessions
+│   └── tools/                # Data ingestion, anomaly detection, PDF report generator
+├── frontend/               # TanStack Start SPA (routes/, components/, lib/)
+├── db/                     # dbmate migrations (db/migrations/) + db/seed.sql test data — see db/README.md
+├── scripts/                # Model discovery CLI
+├── tests/                  # pytest suite + eval harnesses + fixtures
+├── Dockerfile              # Multi-stage build (node:20 → python:3.12-slim)
+├── docker-compose.yml      # api + postgres:16 stack
+└── start.sh                # Production launcher (uvicorn on :7860)
+```
+
+---
 
 ## 🚀 Quick Start (Local Development)
 
@@ -122,6 +226,40 @@ See [.env.example](.env.example) for every variable, including CORS, upload limi
    ```
 
 > In production mode the backend serves the built frontend itself, so a single process on one port is enough (see below).
+
+### Database migrations
+
+The initial schema is created automatically at startup by the idempotent
+`init_db()` bootstrap. Everything **after** that baseline is a versioned SQL
+file in `db/migrations/`, applied with [dbmate](https://dbmate.org):
+
+```bash
+winget install amacneil.dbmate   # once per machine (brew install dbmate on macOS)
+dbmate new add_budget_index      # create a migration file
+dbmate -e DATABASE_URL_MIGRATIONS up       # apply pending migrations
+dbmate -e DATABASE_URL_MIGRATIONS status   # what is applied / pending
+```
+
+Migrations use `DATABASE_URL_MIGRATIONS` (Supabase session pooler, port 5432)
+rather than the app's `DATABASE_URL` (transaction pooler, port 6543), which
+breaks the prepared statements dbmate needs. Run `... up` as a deploy step (CI
+or release script) — migrations are not applied at app startup. See
+[`db/README.md`](db/README.md) for the full convention, including how this
+coexists with `init_db()`.
+
+### Test data
+
+Seed rows (two test users, three months of transactions with deliberate budget
+breaches) live in **`db/seed.sql`** — deliberately *not* a migration, so it is
+re-runnable and never reaches production:
+
+```bash
+python scripts/seed.py
+```
+
+Run it once the app has created the schema. Logins: `test@example.com` /
+`admin@example.com`, password `password123`. Details in
+[`db/README.md`](db/README.md).
 
 ---
 

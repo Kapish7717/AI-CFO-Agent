@@ -68,7 +68,18 @@ def _stripe_record(record: dict) -> dict:
         transaction_type = "refund"
         direction = "outflow"
         status = "succeeded" if status_raw == "succeeded" else ("failed" if status_raw == "failed" else status_raw)
-    elif obj_type in ("transfer", "payout", "dispute"):
+    elif obj_type in ("transfer", "payout"):
+        # Money moving between the Stripe balance and a bank account, or between
+        # connected accounts. Booking it as an expense double counts the same
+        # balance once as revenue and again as cost, so it is recorded as its
+        # own type with an "internal" direction. Every consumer filters on
+        # transaction_type 'revenue'/'expense', so this is counted as neither.
+        transaction_type = "transfer"
+        direction = "internal"
+        status = status_raw
+    elif obj_type == "dispute":
+        # A disputed charge really does take the money back, so it stays an
+        # outflow rather than joining the internal transfers above.
         transaction_type = "expense"
         direction = "outflow"
         status = status_raw
@@ -374,6 +385,17 @@ def write_to_unified_store(records, user_id: int):
     if not normalized_records:
         return 0
 
+    # Collapse records that share a conflict key before the insert. Postgres
+    # refuses ON CONFLICT DO UPDATE when one command touches the same row
+    # twice, and a batch can legitimately carry the same object twice (an
+    # overlapping poll window, or a webhook replay racing the poller). Later
+    # records win, which matches "the newest payload is the truth".
+    deduped: dict[tuple, dict] = {}
+    for r in normalized_records:
+        key = (r.get("source") or "unknown", str(r.get("user_id")), r["external_id"])
+        deduped[key] = r
+    normalized_records = list(deduped.values())
+
     conn = get_conn()
     cur = conn.cursor()
 
@@ -397,12 +419,27 @@ def write_to_unified_store(records, user_id: int):
     )
     VALUES %s
     ON CONFLICT (external_id, source, user_id)
-    DO NOTHING
+    DO UPDATE SET
+        transaction_type = EXCLUDED.transaction_type,
+        direction = EXCLUDED.direction,
+        amount = EXCLUDED.amount,
+        currency = EXCLUDED.currency,
+        transaction_date = EXCLUDED.transaction_date,
+        description = EXCLUDED.description,
+        category = EXCLUDED.category,
+        counterparty = EXCLUDED.counterparty,
+        status = EXCLUDED.status,
+        payment_method = EXCLUDED.payment_method,
+        updated_at = EXCLUDED.updated_at
     """
 
     # Pre-check which (external_id, source, user_id) triples already exist so
-    # the inserted count is accurate. `execute_values`' rowcount only reflects
-    # the last chunk.
+    # the returned count reflects rows genuinely added. The pre-check no longer
+    # gates the write: previously existing keys were filtered out and hit DO
+    # NOTHING, so a replayed webhook could never correct a row whose payload had
+    # changed (a charge flipping to refunded, say). Now every key is written
+    # and the pre-check is purely for the count. `execute_values`' rowcount only
+    # reflects the last chunk, so it cannot answer this on its own.
     existing = set()
     by_user_source: dict[tuple[str, str], list[str]] = {}
     for r in normalized_records:
@@ -416,14 +453,11 @@ def write_to_unified_store(records, user_id: int):
         for (ext_id,) in cur.fetchall():
             existing.add((src, uid, ext_id))
 
-    to_insert = [
-        r for r in normalized_records
+    inserted = sum(
+        1
+        for r in normalized_records
         if (r.get("source") or "unknown", str(r.get("user_id")), r["external_id"]) not in existing
-    ]
-    if not to_insert:
-        cur.close()
-        conn.close()
-        return 0
+    )
 
     values = [
         (
@@ -442,15 +476,27 @@ def write_to_unified_store(records, user_id: int):
             r.get("payment_method"),
             datetime.now(),
         )
-        for r in to_insert
+        for r in normalized_records
     ]
 
     execute_values(cur, query, values)
-    inserted = len(to_insert)
 
     conn.commit()
     cur.close()
     conn.close()
+
+    # Ingestion just changed the numbers the dashboard reports on. Cached
+    # overviews are short-lived (see app/api/dashboard.py), but dropping them
+    # here means a user who uploads a file and immediately reloads sees it.
+    # Lazy import: app.api.dashboard imports this module's dependents, so a
+    # module-level import would be a cycle.
+    try:
+        from app.api.dashboard import invalidate_dashboard_cache
+        for changed_user in {user_id} | {r.get("user_id") for r in normalized_records}:
+            if changed_user is not None:
+                invalidate_dashboard_cache(int(changed_user))
+    except Exception:
+        pass
 
     return inserted
 

@@ -181,6 +181,36 @@ def download_from_storage(remote_path: str, local_path: str) -> bool:
         return _download_via_http(client, remote_path, local_path)
 
 
+def storage_file_created_at(remote_path: str) -> str | None:
+    """
+    Returns the file's ``created_at`` from bucket metadata *without downloading
+    it*. Use this whenever only the timestamp is wanted (e.g. the dashboard's
+    "last sync" label) — pulling the whole object just to stat it turns a
+    metadata lookup into a hundreds-of-KB transfer on every request.
+
+    Returns None when the client is inactive, the listing fails, or the file
+    does not exist; callers should treat None as "unknown".
+    """
+    client = get_storage_client()
+    if not client:
+        return None
+
+    remote_path = remote_path.replace("\\", "/")
+    prefix, _, name = remote_path.rpartition("/")
+    if not name:
+        return None
+    try:
+        entries = client.storage.from_(BUCKET_NAME).list(prefix or None)
+        for entry in entries or []:
+            if entry.get("name") == name:
+                return entry.get("created_at") or entry.get("updated_at")
+        return None
+    except Exception as e:
+        # Metadata-only, so failures are cheap and safe to ignore.
+        logger.debug("Could not list '%s' for metadata: %s", remote_path, e)
+        return None
+
+
 def _download_via_http(client, remote_path: str, local_path: str) -> bool:
     """Fallback: download via public URL using httpx (bypasses SDK SSL issues)."""
     try:

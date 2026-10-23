@@ -23,7 +23,14 @@ services:
         sync: false
       - key: SUPABASE_KEY
         sync: false
+      # Dashboard response cache (app/core/cache.py). Set both in the Render
+      # dashboard from console.upstash.com (region: us-west-2, near Oregon).
+      # Left unset, the app still runs — caching is simply disabled.
+      - key: UPSTASH_REDIS_REST_URL
+        sync: false
+      - key: UPSTASH_REDIS_REST_TOKEN
+        sync: false
       - key: CORS_ORIGINS
-        value: "https://your-app.vercel.app"
+        value: "https://ai-cfo-agent-tau.vercel.app"
       - key: ALLOW_MODEL_FALLBACK
         value: "true"

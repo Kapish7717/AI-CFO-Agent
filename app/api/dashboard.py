@@ -2,15 +2,17 @@ import json
 import logging
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import pandas as pd
 from fastapi import APIRouter, Depends
 
 from app.agents.mcp_server import get_user_state_paths
+from app.core.cache import cache_delete, cache_get, cache_set
 from app.core.config import get_settings
 from app.core.security import get_active_user_id
 from app.db.database import get_domain_user_ids, get_user_settings, get_user_transactions
-from app.db.storage import download_from_storage
+from app.db.storage import download_from_storage, storage_file_created_at
 
 router = APIRouter()
 logger = logging.getLogger("backend.api.dashboard")
@@ -38,20 +40,94 @@ def get_selected_month_data_raw(df, month_str):
         "margin": ((rev - exp) / rev * 100) if rev > 0 else 0.0
     }
 
+# --------------------------------------------------------------------------- #
+# Response cache
+
+# Response cache, stored in Upstash (see app/core/cache.py for fail-open rules).
+#
+# Key design: ONE Redis key per user — "dashboard:user:{id}" — holding a small
+# dict of {month: {"exp": epoch, "payload": {...}}}. Two reasons:
+#   * invalidating a user is a single DEL, no key scanning over REST;
+#   * each month carries its own expiry inside the blob, so a month entry can't
+#     be kept alive by another month's write.
+# The payload is deep-copied by virtue of travelling through JSON.
+_CACHE_KEY_PREFIX = "dashboard:user:"
+
+
+def _cache_key(user_id: int) -> str:
+    return f"{_CACHE_KEY_PREFIX}{user_id}"
+
+
+def _cache_get(user_id: int, month: str | None) -> dict | None:
+    blob = cache_get(_cache_key(user_id))
+    if not isinstance(blob, dict):
+        return None
+    entry = blob.get(month or "")
+    if not isinstance(entry, dict):
+        return None
+    if float(entry.get("exp") or 0) <= time.time():
+        return None  # expired: Redis TTL also covers this, belt and braces
+    payload = entry.get("payload")
+    return payload if isinstance(payload, dict) else None
+
+
+def _cache_put(user_id: int, month: str | None, payload) -> None:
+    if not isinstance(payload, dict):
+        return
+    key = _cache_key(user_id)
+    blob = cache_get(key)
+    if not isinstance(blob, dict):
+        blob = {}
+    blob[month or ""] = {
+        "exp": time.time() + float(get_settings().DASHBOARD_CACHE_TTL_SECONDS),
+        "payload": payload,
+    }
+    cache_set(key, blob, ttl_seconds=get_settings().DASHBOARD_CACHE_TTL_SECONDS)
+
+
+def invalidate_dashboard_cache(user_id: int | None = None) -> None:
+    """Drop a user's cached dashboards. Called by unified_store after writes.
+
+    Passing None clears everything; over the REST API that would need a SCAN,
+    so it is deliberately a no-op — the 30s TTL is the backstop.
+    """
+    if user_id is None:
+        return
+    cache_delete(_cache_key(user_id))
+
+
+
 @router.get("/api/dashboard/overview")
 def get_dashboard_overview(month: str = None, user_id: int = Depends(get_active_user_id)):
+    cached = _cache_get(user_id, month)
+    if cached is not None:
+        return cached
+
     # Resolve all user IDs in this company domain
     domain_user_ids = get_domain_user_ids(user_id)
 
     state_file, report_file, breaches_file = get_user_state_paths(user_id)
     cash_base = get_settings().CASH_BASE_AMOUNT
-    
-    # Try downloading budget breaches from Supabase Storage
-    try:
-        download_from_storage(f"breaches/budget_breaches_{user_id}.json", breaches_file)
-    except Exception:
-        pass
-    
+
+    # Budget breaches JSON and the report timestamp come from Supabase Storage;
+    # fetch them concurrently, since each is a cross-region round trip. The
+    # report is *not* downloaded — only its metadata is read (see below).
+    def _fetch_breaches():
+        try:
+            download_from_storage(f"breaches/budget_breaches_{user_id}.json", breaches_file)
+        except Exception:
+            pass
+
+    def _report_created_at():
+        try:
+            return storage_file_created_at(f"reports/executive_cfo_report_{user_id}.pdf")
+        except Exception:
+            return None
+
+    with ThreadPoolExecutor(max_workers=2) as storage_pool:
+        storage_pool.submit(_fetch_breaches).result()
+        report_created_future = storage_pool.submit(_report_created_at)
+
     # Check settings for budget limits (falls back to admin's files if user has none)
     settings = get_user_settings(user_id)
     
@@ -59,7 +135,7 @@ def get_dashboard_overview(month: str = None, user_id: int = Depends(get_active_
     rows = get_user_transactions(user_id, user_ids=domain_user_ids)
     
     if not rows:
-        return {
+        empty_payload = {
             "total_revenue": "$0.00",
             "total_expenses": "$0.00",
             "net_profit": "$0.00",
@@ -84,6 +160,8 @@ def get_dashboard_overview(month: str = None, user_id: int = Depends(get_active_
             "budget_operations": float(settings["budget_operations"]) if settings["budget_operations"] else 8000.0,
             "budget_travel": float(settings["budget_travel"]) if settings["budget_travel"] else 2000.0,
         }
+        _cache_put(user_id, month, empty_payload)
+        return empty_payload
         
     try:
         df = pd.DataFrame(rows)
@@ -237,14 +315,18 @@ def get_dashboard_overview(month: str = None, user_id: int = Depends(get_active_
             insights.append(f"Warning: {anomalies_count} financial anomalies flagged in this period.")
 
         last_sync = "Never"
-        pdf_path = report_file
         try:
-            download_from_storage(f"reports/executive_cfo_report_{user_id}.pdf", pdf_path)
+            report_created = report_created_future.result(timeout=15)
         except Exception:
-            pass
-        if os.path.exists(pdf_path):
-            mod_time = os.path.getmtime(pdf_path)
-            last_sync = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(mod_time))
+            report_created = None
+        if report_created:
+            # Metadata read, not a download — the PDF can be hundreds of KB and
+            # this used to pull the whole file just to show one timestamp.
+            try:
+                report_ts = pd.Timestamp(report_created).timestamp()
+                last_sync = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(report_ts))
+            except Exception:
+                last_sync = str(report_created)
         elif df is not None and not df.empty:
             last_sync = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))
 
@@ -255,7 +337,7 @@ def get_dashboard_overview(month: str = None, user_id: int = Depends(get_active_
         except Exception:
             date_range_str = selected_month
             
-        return {
+        payload = {
             "total_revenue": format_short_currency(tot_rev),
             "total_expenses": format_short_currency(tot_exp),
             "net_profit": format_short_currency(net_prof),
@@ -280,6 +362,8 @@ def get_dashboard_overview(month: str = None, user_id: int = Depends(get_active_
             "budget_operations": float(settings.get("budget_operations")) if settings and settings.get("budget_operations") is not None else 8000.0,
             "budget_travel": float(settings.get("budget_travel")) if settings and settings.get("budget_travel") is not None else 2000.0
         }
+        _cache_put(user_id, month, payload)
+        return payload
     except Exception as e:
         logger.warning("Dashboard overview failed for user %s: %s", user_id, e, exc_info=True)
         return {"error": str(e)}

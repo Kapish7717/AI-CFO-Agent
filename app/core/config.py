@@ -60,6 +60,17 @@ class Settings(BaseSettings):
     STRIPE_WEBHOOK_SECRET: str = ""
     GOOGLE_CREDENTIALS_JSON: str = ""
 
+    # --- QuickBooks Online (read-only integration) --------------------------
+    QBO_ENV: str = "sandbox"  # sandbox | production
+    QBO_CLIENT_ID: str = ""
+    QBO_CLIENT_SECRET: str = ""
+    QBO_REDIRECT_URI: str = ""
+    QBO_WEBHOOK_VERIFIER: str = ""
+    # Signs the OAuth ``state`` parameter and encrypts stored QBO tokens (Fernet).
+    STATE_SECRET: str = ""
+    TOKEN_ENCRYPTION_KEY: str = ""
+    FRONTEND_URL: str = ""
+
     # --- File uploads --------------------------------------------------------
     MAX_UPLOAD_MB: int = 25
     ALLOWED_UPLOAD_EXTENSIONS: str = ".csv,.xlsx,.xls"
@@ -67,6 +78,9 @@ class Settings(BaseSettings):
     # --- Dashboard ------------------------------------------------------------
     # Seed "cash on hand" used when computing the dashboard cash balance. In a
     # self-serve deployment this should be tracked from real source accounts.
+    UPSTASH_REDIS_REST_URL: str = ""
+    UPSTASH_REDIS_REST_TOKEN: str = ""
+    DASHBOARD_CACHE_TTL_SECONDS: int = 30
     CASH_BASE_AMOUNT: float = 1_750_000.0
 
     # --- Feature flags ---------------------------------------------------------
