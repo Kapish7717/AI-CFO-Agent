@@ -37,8 +37,12 @@ jobs:
           pip install -r requirements.txt -r requirements-dev.txt
       - name: Run test suite with coverage
         env:
-          APP_ENV: development
-          SEED_DEFAULT_USER: "0"
+          APP_ENV: test
+          GROQ_API_KEY: test-dummy-key
+          JINA_API_KEY: ""
+          OPENAI_API_KEY: ""
+          ANTHROPIC_API_KEY: ""
+          DATABASE_URL: postgresql://test:test@localhost:5432/test
         run: |
           coverage run -m pytest tests -q
           coverage report -m \
