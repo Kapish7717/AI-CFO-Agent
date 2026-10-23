@@ -25,9 +25,29 @@ TABLE_SPECS = [
 ]
 
 
+@pytest.fixture(autouse=True)
+def _stub_llm_client(monkeypatch):
+    """Never construct a real LLM client in this module.
+
+    The pipeline tests stub ``generate_text``/``generate_text_stream`` directly,
+    so the client object is unused -- but building it still demands a provider
+    key (``GROQ_API_KEY``), which CI does not set. Without this the pipeline
+    short-circuits with "Data query failed: The api_key client option must be
+    set" before the stubbed LLM is ever reached.
+    """
+    monkeypatch.setattr("app.services.llm_factory.create_llm", lambda **kwargs: object())
+    monkeypatch.setattr("app.services.rag._llm_for", lambda settings: object())
+    monkeypatch.setenv("GROQ_API_KEY", "test")
+    monkeypatch.setenv("JINA_API_KEY", "")
+
+
+
 def _stub_pipeline(monkeypatch, fake_generate_text, history=None, rows=None):
     """Wire the RAG pipeline to stubbed supabase-mcp tools + a stubbed LLM."""
     seen: dict = {}
+    # Prevent real Groq client from initializing
+    monkeypatch.setenv("GROQ_API_KEY", "test")
+    monkeypatch.setenv("JINA_API_KEY", "")
 
     async def fake_describe(user_id, table_name="unified_transactions"):
         return TABLE_SPECS
@@ -42,6 +62,8 @@ def _stub_pipeline(monkeypatch, fake_generate_text, history=None, rows=None):
     monkeypatch.setattr(rag, "get_user_chat_history", lambda user_id, limit=10: history or [])
     monkeypatch.setattr(rag, "get_domain_user_ids", lambda user_id: [user_id])
     monkeypatch.setattr(rag, "JINA_API_KEY", "")
+    monkeypatch.setattr(rag, "_llm_for", lambda settings: object())
+    monkeypatch.setattr("app.services.llm_factory.create_llm", lambda **kwargs: object())
     seen["rows"] = rows
     return patch("app.services.llm_factory.generate_text", fake_generate_text), seen
 
